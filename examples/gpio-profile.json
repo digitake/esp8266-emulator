@@ -1,0 +1,15 @@
+{
+  "name": "gpio-demo",
+  "title": "Example GPIO panel",
+  "kind": "switch",
+  "gangs": [
+    {
+      "button": 0,
+      "relay": 5,
+      "led": 2,
+      "button_active_low": true,
+      "led_active_low": true
+    }
+  ],
+  "status_led": null
+}

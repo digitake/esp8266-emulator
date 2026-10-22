@@ -1,0 +1,22 @@
+# Build outputs and local tooling
+/build/
+__pycache__/
+*.py[cod]
+.venv/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# User-supplied firmware, persistent flash, credentials and raw traces
+*.bin
+*.elf
+*.hex
+*.pem
+*.key
+.env
+.env.*
+*.log
+*.jsonl
+/local/
+/artifacts/

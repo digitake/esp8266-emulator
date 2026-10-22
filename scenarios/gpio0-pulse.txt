@@ -1,0 +1,4 @@
+# Example only: drive GPIO0 LOW at 500 ms, then release it at 650 ms.
+# Choose a GPIO and timing suitable for your own firmware.
+500 in 0 0
+650 in 0 -1

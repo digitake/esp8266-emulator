@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "cases": [
+    {
+      "name": "boot",
+      "kind": "evidence",
+      "bin": "../local/firmware/app.bin",
+      "elf": "../local/firmware/app.elf",
+      "profile": "generic",
+      "seconds": 10,
+      "milestone": "BOOT",
+      "reference": "../local/references/boot.json"
+    },
+    {
+      "name": "ota-raw",
+      "kind": "ota",
+      "running": "../local/firmware/app.bin",
+      "running_elf": "../local/firmware/app.elf",
+      "new": "../local/firmware/update.bin",
+      "gzip": false,
+      "seconds": 6,
+      "stage_at_ms": 1500,
+      "reference": "../local/references/ota-raw.json"
+    }
+  ]
+}
