@@ -58,10 +58,16 @@ class NetworkServiceTests(unittest.TestCase):
         ]
         broker = {'versions': ['A', 'B'], 'version_connections': [
             {'connection': 1, 'version': 'A'}, {'connection': 2, 'version': 'B'}],
+            'config_connections': [{'connection': 1, 'marker': 'persisted-v1'},
+                                   {'connection': 2, 'marker': 'persisted-v1'}],
             'subscribed': True, 'subscription_connections': [1], 'ota_sent': True,
             'version_b_seen_at': 10.0}
         http = {'requests': 1, 'status': 200, 'flash_prefix': b'\xe9new image'}
-        uart = ' ets Jan  8 2013\nold\n ets Jan  8 2013\nnetwork reference firmware B\n'
+        uart = (' ets Jan  8 2013\nold\nnetwork lifecycle mode-off disconnected\n'
+                'network lifecycle station dhcp restored\nconfiguration marker persisted-v1\n'
+                ' ets Jan  8 2013\n'
+                'network reference firmware B\nnetwork lifecycle mode-off disconnected\n'
+                'network lifecycle station dhcp restored\nconfiguration marker persisted-v1\n')
         report = {'end': 'quit', 'halt': '', 'boots': 2}
         checks = network_check.build_checks(events, report, broker, http, uart,
                                             b'\xe9new image', 12.0)
@@ -82,6 +88,84 @@ class NetworkServiceTests(unittest.TestCase):
                                             b'\xe9new image', 12.0)
         self.assertFalse(checks['exactly_two_rom_boots'])
         self.assertFalse(checks['no_later_boot'])
+
+    def test_web_upload_requires_real_post_and_no_mqtt_ota_trigger(self):
+        events = [
+            {'t': 'stage', 's': 'rom', 'boot': 1}, {'t': 'stage', 's': 'loop', 'boot': 1},
+            {'t': 'stage', 's': 'rom', 'boot': 2}, {'t': 'stage', 's': 'loop', 'boot': 2},
+        ]
+        broker = {'versions': ['A', 'B'], 'version_connections': [
+            {'connection': 1, 'version': 'A'}, {'connection': 2, 'version': 'B'}],
+            'config_connections': [{'connection': 1, 'marker': 'persisted-v1'},
+                                   {'connection': 2, 'marker': 'persisted-v1'}],
+            'subscribed': True, 'subscription_connections': [1], 'ota_sent': False,
+            'version_b_seen_at': 10.0}
+        http = {'requests': 0, 'status': 0, 'flash_prefix': b'\xe9new image'}
+        upload = {'status': 200, 'response': b'HTTP/1.1 200 OK\r\n\r\nUpdate Success!',
+                  'sent': True}
+        uart = (' ets Jan  8 2013\nold\nnetwork lifecycle mode-off disconnected\n'
+                'network lifecycle station dhcp restored\nconfiguration marker persisted-v1\n'
+                ' ets Jan  8 2013\n'
+                'network reference firmware B\nnetwork lifecycle mode-off disconnected\n'
+                'network lifecycle station dhcp restored\nconfiguration marker persisted-v1\n')
+        report = {'end': 'quit', 'halt': '', 'boots': 2}
+        checks = network_check.build_checks(events, report, broker, http, uart,
+                                            b'\xe9new image', 12.0, 'web', upload)
+        self.assertTrue(all(checks.values()))
+
+        missing_boot2_lifecycle = uart.replace(
+            'network reference firmware B\nnetwork lifecycle mode-off disconnected\n'
+            'network lifecycle station dhcp restored\nconfiguration marker persisted-v1\n',
+            'network reference firmware B\nconfiguration marker persisted-v1\n')
+        checks = network_check.build_checks(events, report, broker, http, missing_boot2_lifecycle,
+                                            b'\xe9new image', 12.0, 'web', upload)
+        self.assertFalse(checks['boot2_wifi_mode_off_disconnected'])
+        self.assertFalse(checks['boot2_wifi_station_reacquired_dhcp'])
+
+        triggered = dict(broker, ota_sent=True)
+        checks = network_check.build_checks(events, report, triggered, http, uart,
+                                            b'\xe9new image', 12.0, 'web', upload)
+        self.assertFalse(checks['no_mqtt_ota_publish'])
+
+        failed_upload = dict(upload, response=b'HTTP/1.1 200 OK\r\n\r\nUpdate error: invalid image')
+        checks = network_check.build_checks(events, report, broker, http, uart,
+                                            b'\xe9new image', 12.0, 'web', failed_upload)
+        self.assertFalse(checks['web_upload_succeeded'])
+
+        missing_marker = dict(broker, config_connections=[
+            {'connection': 1, 'marker': 'persisted-v1'}, {'connection': 2, 'marker': 'missing'}])
+        checks = network_check.build_checks(events, report, missing_marker, http, uart,
+                                            b'\xe9new image', 12.0, 'web', upload)
+        self.assertFalse(checks['configuration_marker_survived_ota'])
+
+        missing_a_marker = dict(broker, config_connections=[
+            {'connection': 1, 'marker': 'missing'}, {'connection': 2, 'marker': 'persisted-v1'}])
+        checks = network_check.build_checks(events, report, missing_a_marker, http, uart,
+                                            b'\xe9new image', 12.0, 'web', upload)
+        self.assertFalse(checks['configuration_marker_reported_on_a_connection'])
+
+    def test_multipart_web_upload_has_firmware_field_and_exact_length(self):
+        request = network_check.make_multipart_upload(b'\xe9firmware')
+        headers, body = request.split(b'\r\n\r\n', 1)
+        self.assertIn(b'POST /update HTTP/1.1', headers)
+        self.assertIn(b'name="firmware"; filename="reference.bin"', body)
+        self.assertIn(b'\r\n\r\n\xe9firmware\r\n', body)
+        length = int(next(line.split(b':', 1)[1] for line in headers.split(b'\r\n')
+                          if line.startswith(b'Content-Length:')))
+        self.assertEqual(length, len(body))
+
+    def test_raw_update_normalizes_only_header_mode_while_gzip_preserves_it(self):
+        running = b'\xe9\x01\x02old-image-data'
+        replacement = b'\xe9\x01\x00new-image-data'
+        raw_image, source_mode, flash_mode, normalized = network_check.expected_flash_image(
+            running, replacement, gzip_transfer=False)
+        self.assertEqual(raw_image, b'\xe9\x01\x02new-image-data')
+        self.assertEqual((source_mode, flash_mode, normalized), (0, 2, True))
+
+        gzip_image, source_mode, flash_mode, normalized = network_check.expected_flash_image(
+            running, replacement, gzip_transfer=True)
+        self.assertEqual(gzip_image, replacement)
+        self.assertEqual((source_mode, flash_mode, normalized), (0, 0, False))
 
 
 if __name__ == '__main__':
