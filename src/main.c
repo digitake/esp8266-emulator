@@ -467,12 +467,17 @@ static void write_report(const char *why)
             E.chip_profile ? E.chip_profile->name : "esp8266", E.flash_id);
     if (net_profile_requested()) {
         net_stats_t stats = net_get_stats();
+        net_profile_match_t match = net_profile_match();
         fprintf(f, ",\n  \"network\": {\"virtual_station\": true, \"connected\": %s, "
                    "\"ip\": %u, \"tx_packets\": %llu, \"rx_packets\": %llu, "
-                   "\"tx_rejected\": %llu, \"rx_dropped\": %llu}",
+                   "\"tx_rejected\": %llu, \"rx_dropped\": %llu, "
+                   "\"image_index\": %u, \"profile_bound\": %s, "
+                   "\"flash_mode_normalized\": %s, \"image_mode\": %u, \"flash_mode\": %u}",
                 stats.connected ? "true" : "false", stats.ip,
                 (unsigned long long)stats.tx_packets, (unsigned long long)stats.rx_packets,
-                (unsigned long long)stats.tx_rejected, (unsigned long long)stats.rx_dropped);
+                (unsigned long long)stats.tx_rejected, (unsigned long long)stats.rx_dropped,
+                match.image_index, match.active ? "true" : "false",
+                match.mode_normalized ? "true" : "false", match.image_mode, match.flash_mode);
     }
     fputs("\n}\n", f);
     fclose(f);

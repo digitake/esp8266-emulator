@@ -98,6 +98,12 @@ static void image_section(FILE *f,const char *path,uint32_t offset,bool all) {
  for(unsigned i=0;i<(all?S_COUNT:1);i++)fprintf(f,"symbol %s 0x%x\n",names[i],symbols[i]+offset);
  fputs("end\n",f);
 }
+static void profile_rejected(void) {
+ expect_halt=true;
+ if(!setjmp(halt_return)){net_profile_app();assert(!"unknown application was accepted");}
+ expect_halt=false;
+ assert(!net_is_enabled() && !net_profile_match().active);
+}
 static void profile_lifecycle(void) {
  char dir[]="/tmp/esp-net-profile-XXXXXX";assert(mkdtemp(dir));
  char a[256],b[256],profile[256];snprintf(a,sizeof a,"%s/old image.bin",dir);snprintf(b,sizeof b,"%s/new image.bin",dir);snprintf(profile,sizeof profile,"%s/network.txt",dir);
@@ -110,18 +116,52 @@ static void profile_lifecycle(void) {
  memset(flash,0xff,sizeof flash);memcpy(flash,old,sizeof old);E.flash=flash;E.flash_size=sizeof flash;E.boot_count=10;
  net_profile_reset(10);assert(!E.entry_hook && !E.guest_service && !net_is_enabled());
  net_profile_app();assert(E.entry_hook==net_hook && E.guest_service==net_service_guest);assert(backend_generation==10);
+ assert(net_profile_match().active && net_profile_match().image_index==1 && !net_profile_match().mode_normalized);
  // SDK configuration beyond the BIN prefix does not invalidate the image.
  flash[300]=0x42;net_profile_reset(11);E.boot_count=11;net_profile_app();assert(net_is_enabled());
  // An OTA restart leaves hooks disabled until the new application is selected.
  net_profile_reset(12);E.boot_count=12;assert(!net_is_enabled() && !E.entry_hook);
  memcpy(flash,next,sizeof next);net_profile_app();assert(backend_generation==12);
  assert(!net_hook(symbols[S_CONNECT]));C.a[0]=FLASHMAP_BASE+0xff000;assert(net_hook(symbols[S_CONNECT]+0x10000));
+ // Raw Updater preserves the old flash mode. A cold process must also bind
+ // that persisted image, with all non-mode bytes checked and no source edits.
+ for(unsigned mode=0;mode<4;mode++) {
+  net_profile_reset(13);E.boot_count=13;assert(!net_profile_match().active);
+  flash[2]=mode;net_profile_app();net_profile_match_t match=net_profile_match();
+  assert(match.active && match.image_index==2 && match.image_mode==0 && match.flash_mode==mode);
+  assert(match.mode_normalized==(mode!=0));
+ }
+ net_profile_close();assert(!net_profile_match().active);
+ // Restore the original on-disk first image, then simulate a new process.
+ write_bytes(a,old,sizeof old);assert(net_profile_load(profile,error,sizeof error));
+ net_profile_reset(13);net_profile_app();assert(net_profile_match().mode_normalized);
+ // Every other byte remains binding, including header flags and flash size.
+ for(unsigned byte=0;byte<sizeof next;byte++) {
+  if(byte==2)continue;
+  net_profile_reset(13);flash[byte]^=0x80;
+  profile_rejected();
+  assert(!net_is_enabled() && !net_profile_match().active);flash[byte]^=0x80;
+ }
+ for(unsigned mode=4;mode<=255;mode++) {
+  net_profile_reset(13);flash[2]=mode;
+  profile_rejected();
+ }
+ flash[2]=0;
  net_profile_reset(13);E.boot_count=13;flash[8]^=1;
  expect_halt=true;if(!setjmp(halt_return)){net_profile_app();assert(!"unknown application was accepted");}expect_halt=false;
  assert(!net_is_enabled());net_profile_close();assert(!net_profile_requested());
  // Duplicate image bytes cannot silently pick the first ELF/symbol profile.
+ write_bytes(a,next,sizeof next);
  f=fopen(profile,"w");assert(f);fputs("esp8266-net-v1 arduino-3.1.2-lwip2\n",f);image_section(f,a,0,true);image_section(f,b,0x10000,true);assert(!fclose(f));
  assert(!net_profile_load(profile,error,sizeof error));assert(strstr(error,"ambiguous"));
+ // Even an exact match is unsafe if another ELF profile differs only in mode.
+ next[2]=3;write_bytes(b,next,sizeof next);
+ assert(!net_profile_load(profile,error,sizeof error));assert(strstr(error,"ambiguous"));
+ // Reject ambiguous prefixes with different BIN lengths too.
+ uint8_t longer[32]={0};memcpy(longer,next,sizeof next);write_bytes(b,longer,sizeof longer);
+ assert(!net_profile_load(profile,error,sizeof error));assert(strstr(error,"ambiguous"));
+ next[2]=4;write_bytes(b,next,sizeof next);
+ assert(!net_profile_load(profile,error,sizeof error));assert(strstr(error,"flash mode"));
  // Missing required symbols fail before booting.
  f=fopen(profile,"w");assert(f);fputs("esp8266-net-v1 arduino-3.1.2-lwip2\n",f);image_section(f,a,0,false);assert(!fclose(f));
  assert(!net_profile_load(profile,error,sizeof error));assert(strstr(error,"missing"));

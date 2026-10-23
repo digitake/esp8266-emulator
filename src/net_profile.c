@@ -24,6 +24,17 @@ typedef struct {
 static profile_image_t images[PROFILE_IMAGES];
 static unsigned image_count;
 static bool requested, activated;
+static net_profile_match_t selected;
+
+// Arduino 3.1.2 Updater::_writeBuffer may replace only header byte 2 on raw
+// U_FLASH updates, preserving the running QIO/QOUT/DIO/DOUT mode (0..3).
+// Compare the complete cached BIN otherwise. This also recognizes a persisted
+// updated image on a fresh process, where no previous boot mode is available.
+static bool image_matches(const uint8_t *a, const uint8_t *b, size_t size)
+{
+    return size >= 3 && a[2] <= 3 && b[2] <= 3 &&
+           !memcmp(a, b, 2) && !memcmp(a + 3, b + 3, size - 3);
+}
 
 void net_profile_close(void)
 {
@@ -34,6 +45,7 @@ void net_profile_close(void)
     memset(images, 0, sizeof images);
     image_count = 0;
     requested = activated = false;
+    selected = (net_profile_match_t){0};
     net_clear_symbols();
 }
 
@@ -58,6 +70,10 @@ static bool image_read(profile_image_t *image, const char *path, char *error, si
     fclose(f);
     if (!ok || image->bytes[0] != 0xe9) {
         snprintf(error, size, "profile image must be a readable E9 image for flash address zero");
+        return false;
+    }
+    if (image->bytes[2] > 3) {
+        snprintf(error, size, "profile image has an unsupported flash mode (expected 0..3)");
         return false;
     }
     return true;
@@ -150,12 +166,12 @@ bool net_profile_load(const char *path, char *error, size_t error_size)
     }
     fclose(f);
     if (!ok) { net_profile_close(); return false; }
-    // Prefix-identical profiles are ambiguous because persistent flash may be
-    // larger than either BIN. Reject them before executing guest instructions.
+    // Persistent flash may be larger than either BIN. Reject profiles whose
+    // prefixes overlap even after the one permitted flash-mode substitution.
     for (unsigned i = 0; i < image_count; i++) for (unsigned j = 0; j < i; j++) {
         size_t common = images[i].size < images[j].size ? images[i].size : images[j].size;
-        if (!memcmp(images[i].bytes, images[j].bytes, common)) {
-            snprintf(error, error_size, "ambiguous prefix-identical network images");
+        if (image_matches(images[i].bytes, images[j].bytes, common)) {
+            snprintf(error, error_size, "ambiguous network image prefixes after flash-mode normalization");
             net_profile_close(); return false;
         }
     }
@@ -165,6 +181,7 @@ bool net_profile_load(const char *path, char *error, size_t error_size)
 }
 
 bool net_profile_requested(void) { return requested; }
+net_profile_match_t net_profile_match(void) { return selected; }
 
 void net_profile_reset(uint64_t generation)
 {
@@ -173,6 +190,7 @@ void net_profile_reset(uint64_t generation)
     net_disable();
     net_reset(generation);
     activated = false;
+    selected = (net_profile_match_t){0};
 }
 
 void net_profile_app(void)
@@ -181,12 +199,12 @@ void net_profile_app(void)
     const profile_image_t *match = NULL;
     unsigned index = 0;
     for (unsigned i = 0; i < image_count; i++) {
-        if (images[i].size <= E.flash_size && !memcmp(images[i].bytes, E.flash, images[i].size)) {
+        if (images[i].size <= E.flash_size && image_matches(images[i].bytes, E.flash, images[i].size)) {
             if (match) emu_halt("network profile matches multiple application images");
             match = &images[i]; index = i;
         }
     }
-    if (!match) emu_halt("network profile has no exact match for running application; supply its BIN/ELF profile");
+    if (!match) emu_halt("network profile has no matching application (only valid flash-mode byte 2 may differ); supply its BIN/ELF profile");
     char error[256];
     if (!bind(match, error, sizeof error)) emu_halt("network profile: %s", error);
     net_backend_t transport = host_net_backend();
@@ -195,5 +213,12 @@ void net_profile_app(void)
     E.entry_hook = net_hook;
     E.guest_service = net_service_guest;
     activated = true;
-    ev_log("network: virtual station Arduino 3.1.2/lwIP2, exact image profile %u", index + 1);
+    selected = (net_profile_match_t){.active = true, .image_index = index + 1,
+        .mode_normalized = match->bytes[2] != E.flash[2],
+        .image_mode = match->bytes[2], .flash_mode = E.flash[2]};
+    if (selected.mode_normalized)
+        ev_log("network: virtual station Arduino 3.1.2/lwIP2, image profile %u, flash-mode byte 2 normalized from %u to %u; all other BIN bytes exact",
+               index + 1, selected.image_mode, selected.flash_mode);
+    else
+        ev_log("network: virtual station Arduino 3.1.2/lwIP2, exact image profile %u", index + 1);
 }
