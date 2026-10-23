@@ -835,8 +835,8 @@ op_D_SLOW: step_slow(); E.cycles++; E.tick+=E.tpc; return;
 #undef END
 }
 
-// Single-instruction entry for the focused CPU tests.
-static inline void step(void)
+// Single-instruction entry for the focused CPU tests, which include this file.
+static inline __attribute__((unused)) void step(void)
 {
     uint64_t tick=E.tick,cycles=E.cycles;
     cpu_block(1,0);

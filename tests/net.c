@@ -27,8 +27,9 @@ static bool fail_send, fail_alloc;
 static uint64_t backend_generation;
 static bool expect_halt;
 static jmp_buf halt_return;
-void hle_read(uint32_t a, void *d, uint32_t nbytes) { assert(ram(a,nbytes)); memcpy(d,memory+a-DRAM_BASE,nbytes); }
-void hle_write(uint32_t a,const void *d,uint32_t nbytes) { assert(ram(a,nbytes)); memcpy(memory+a-DRAM_BASE,d,nbytes); }
+// Offset first: memory+a would point far outside the array before the subtraction (UB clang's sanitizer reports)
+void hle_read(uint32_t a, void *d, uint32_t nbytes) { assert(ram(a,nbytes)); memcpy(d,memory+(a-DRAM_BASE),nbytes); }
+void hle_write(uint32_t a,const void *d,uint32_t nbytes) { assert(ram(a,nbytes)); memcpy(memory+(a-DRAM_BASE),d,nbytes); }
 uint32_t hle_rd32(uint32_t a) { uint32_t x; hle_read(a,&x,4); return x; }
 void hle_wr32(uint32_t a,uint32_t x) { hle_write(a,&x,4); }
 void ev_log(const char *f,...) {(void)f;}
