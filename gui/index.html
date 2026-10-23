@@ -652,11 +652,13 @@ function renderNet() {
   const badge = (cls, label, val, title) => `<span class="badge ${cls}" title="${esc(title || '')}"><i></i>${esc(label)} <b>${value(String(val))}</b></span>`;
   b.push(badge(fw.softap == null ? '' : fw.softap ? 'up' : 'down', 'soft AP',
     fw.softap == null ? '-' : fw.softap ? (fw.ap_ip || 'up') : 'down' + (fw.ap_note ? ' · ' + fw.ap_note : ''), fw.ap_mac ? 'AP MAC ' + fw.ap_mac : ''));
-  const sta = fw.sta || '-';
-  b.push(badge(/^(got IP|connected)/.test(sta) ? 'up' : sta === 'idle' || sta === '-' ? '' : 'busy', 'station', sta, fw.sta_mac ? 'station MAC ' + fw.sta_mac : ''));
-  b.push(badge(fw.scans ? 'busy' : '', 'scans', fw.scans != null ? fw.scans : '-', 'Wi-Fi scans this boot, from the SDK\'s scandone messages'));
   const net = fw.network;    // a string when offline; the virtual network runner's state is an object, one badge per field
-  if (net && typeof net === 'object') for (const [k, v] of Object.entries(net)) {
+  const virtual = net && typeof net === 'object';
+  const sta = fw.sta || '-';
+  if (!virtual)              // the runner's "virtual station" badge replaces the UART-derived one, which never sees its connection
+    b.push(badge(/^(got IP|connected)/.test(sta) ? 'up' : sta === 'idle' || sta === '-' ? '' : 'busy', 'station', sta, fw.sta_mac ? 'station MAC ' + fw.sta_mac : ''));
+  b.push(badge(fw.scans ? 'busy' : '', 'scans', fw.scans != null ? fw.scans : '-', 'Wi-Fi scans this boot, from the SDK\'s scandone messages'));
+  if (virtual) for (const [k, v] of Object.entries(net)) {
     const s = String(v);
     b.push(badge(v === true || /^(up|connected|on)/i.test(s) ? 'up' : v === false || /^(down|stopped|halted)/i.test(s) ? 'down' :
       /^(starting|waiting)/i.test(s) ? 'busy' : '', k, v, LOCAL_URL.test(s) ? 'opens the forwarded guest port in a new tab' : s));

@@ -458,7 +458,7 @@ network, it also shows what the network runner reports:
 | Badge | Meaning |
 | --- | --- |
 | soft AP | `-` until the SDK reports it; green with its IP when up (`add if1`, `dhcp server start`, `AP started`); `down` after `del if1` or `bcn 0` |
-| station | Idle, scanning or connection state from `scandone`, `connected with`, `ip:` and similar lines |
+| station | Offline runs only. Idle, scanning or connection state from `scandone`, `connected with`, `ip:` and similar lines. On the virtual network the SDK prints none of these for the virtual connection, so **virtual station** takes this badge's place. |
 | scans | Wi-Fi scans this boot |
 | host network | Offline runs only. `unavailable: no host network bridge` without `--net-profile`. With it, an image the profile does not bind shows `offline: this image (sha256 …) is not in the network profile`, and a profile that cannot be read shows `offline: network profile unusable (…)`. Hover for the whole text. |
 | virtual station | Virtual network only. `starting`, then `waiting for the application` until the runner matches the profile at the application stage, then `not connected` or green `connected`. `halted` when execution stopped; `stopped: …` with the runner's last message when it exited, for example because the BIN named in the profile was rebuilt. |
