@@ -57,7 +57,7 @@ class ToolTests(unittest.TestCase):
 
     def test_manifest_runner_uses_fixed_tool_and_preserves_relative_scenario_argument(self):
         with tempfile.TemporaryDirectory() as work:
-            base = Path(work)
+            base = Path(work).resolve()   # macOS: /var is a link to /private/var; the runner resolves
             image = base / 'app.bin'
             image.write_bytes(b'synthetic image')
             reference = {'firmware': {'bin_sha256': hashlib.sha256(image.read_bytes()).hexdigest()}}
@@ -84,7 +84,7 @@ class ToolTests(unittest.TestCase):
 
     def test_ota_manifest_passes_new_elf_and_checks_its_reference_hash(self):
         with tempfile.TemporaryDirectory() as work:
-            base = Path(work)
+            base = Path(work).resolve()   # macOS: /var is a link to /private/var; the runner resolves
             paths = {name: base / name for name in ('running.bin', 'running.elf', 'new.bin', 'new.elf')}
             for name, path in paths.items():
                 path.write_bytes(name.encode())
