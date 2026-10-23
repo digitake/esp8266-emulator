@@ -59,7 +59,22 @@ uint32_t guest_call(uint32_t fn, int nargs, const uint32_t *args)
 {
     uint32_t saved[16], saved_pc = C.pc;
     memcpy(saved, C.a, sizeof saved);
+    if (nargs < 0 || nargs > 64 || (nargs && !args)) emu_halt("invalid guest call arguments");
     if (E.call_depth >= 60) emu_halt("ROM->firmware call nesting too deep (pc %08x)", fn);
+    // CALL0 passes six arguments in registers; remaining words begin at the
+    // callee's entry SP. Reserve an aligned argument area below the caller's
+    // frame and restore it afterward, rather than overwriting caller locals.
+    uint8_t stack_saved[240];
+    uint32_t stack_size = nargs > 6 ? ((uint32_t)(nargs - 6) * 4 + 15) & ~15u : 0;
+    uint32_t stack = C.a[1] - stack_size;
+    if (stack_size) {
+        if (C.a[1] < stack_size || stack < DRAM_BASE ||
+            stack_size > DRAM_SIZE || stack - DRAM_BASE > DRAM_SIZE - stack_size)
+            emu_halt("guest call stack is outside DRAM");
+        hle_read(stack, stack_saved, stack_size);
+        for (int i = 6; i < nargs; i++) hle_wr32(stack + (uint32_t)(i - 6) * 4, args[i]);
+        C.a[1] = stack;
+    }
     uint32_t ret = GUEST_RET_BASE + 4u * (uint32_t)E.call_depth++;
     for (int i = 0; i < nargs && i < 6; i++) C.a[2 + i] = args[i];
     C.a[0] = ret;
@@ -67,6 +82,7 @@ uint32_t guest_call(uint32_t fn, int nargs, const uint32_t *args)
     cpu_run(ret);
     uint32_t rv = C.a[2];
     E.call_depth--;
+    if (stack_size) hle_write(stack, stack_saved, stack_size);
     memcpy(C.a, saved, sizeof saved);
     C.pc = saved_pc;
     return rv;

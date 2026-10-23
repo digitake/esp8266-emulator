@@ -22,6 +22,32 @@ static uint32_t post(uint32_t prio, uint32_t sig)
     return C.a[2];
 }
 
+static void stack_arguments(void)
+{
+    // l32i a8,a1,0; l32i a9,a1,4; add a2,a2,a7; add a2,a2,a8;
+    // add a2,a2,a9; ret.n. Reads CALL0 arguments seven and eight from SP.
+    const uint8_t code[] = {0x82,0x21,0x00,0x92,0x21,0x01,0x70,0x22,0x80,
+                            0x80,0x22,0x80,0x90,0x22,0x80,0x0d,0xf0};
+    uint32_t args[] = {11,22,33,44,55,66,77,88};
+    uint32_t saved[16];
+    for (int i = 0; i < 16; i++) C.a[i] = 0xabc00000u + (uint32_t)i;
+    C.a[1] = DRAM_BASE + DRAM_SIZE - 64;
+    C.pc = IRAM_BASE + 0x500;
+    C.waiting = 0;
+    C.ps = PS_UM;
+    E.irq_req = 0;
+    E.next_event = E.slice_end = E.ccomp_tick = UINT64_MAX;
+    memcpy(saved, C.a, sizeof saved);
+    uint8_t before[32]; memset(before, 0x5a, sizeof before);
+    hle_write(C.a[1] - sizeof before, before, sizeof before);
+    hle_write(IRAM_BASE + 0x300, code, sizeof code);
+    CHECK(guest_call(IRAM_BASE + 0x300, 8, args) == 242);
+    CHECK(!memcmp(saved, C.a, sizeof saved));
+    CHECK(C.pc == IRAM_BASE + 0x500 && E.call_depth == 0);
+    uint8_t after[32]; hle_read(C.a[1] - sizeof after, after, sizeof after);
+    CHECK(!memcmp(before, after, sizeof before));
+}
+
 int main(void)
 {
     memset(&E, 0, sizeof E);
@@ -42,6 +68,7 @@ int main(void)
     rom_hle(dispatcher);
     CHECK(C.pc == IRAM_BASE + 0x100);
     CHECK(hle_rd32(C.a[2]) == 11);
+    stack_arguments();
     printf("scheduler: %s (%d failures)\n", failures ? "FAIL" : "PASS", failures);
     return failures != 0;
 }
