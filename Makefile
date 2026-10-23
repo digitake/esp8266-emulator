@@ -1,6 +1,9 @@
-# esp8266emu: GNU C11 / GCC, no dependencies beyond libc/libm (WSL Ubuntu: gcc + make).
+# esp8266emu: GNU C11 with GCC or clang, no dependencies beyond libc/libm
+# (WSL Ubuntu: gcc + make; macOS: the Xcode command line tools).
 CC ?= gcc
-CFLAGS ?= -O3 -flto=auto -g -std=gnu11 -Wall -Wextra -Wno-unused-parameter -Wno-sign-compare
+# GCC picks its own LTO job count; clang, the cc of macOS, takes plain -flto.
+LTO := $(if $(findstring clang,$(shell $(CC) --version 2>/dev/null)),-flto,-flto=auto)
+CFLAGS ?= -O3 $(LTO) -g -std=gnu11 -Wall -Wextra -Wno-unused-parameter -Wno-sign-compare
 NET_SRC = src/net.c src/net_profile.c src/host_net.c src/host_dns.c
 SRC = src/cpu.c src/soc.c src/rom.c src/crypto.c src/main.c src/chip_profile.c $(NET_SRC)
 HEADERS = $(wildcard src/*.h)

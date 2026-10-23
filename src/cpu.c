@@ -650,8 +650,14 @@ static void decode(decoded_t *d, uint32_t pc, uint32_t insn)
 }
 
 // Keep an indirect dispatch site for each operation so the host branch predictor
-// can learn its successors. GCC tail merging would collapse these NEXT sites.
-static __attribute__((optimize("no-crossjumping,no-gcse"))) void cpu_block(unsigned budget, int observe)
+// can learn its successors. GCC tail merging would collapse these NEXT sites;
+// clang has no per-function optimize attribute and ignores it with a warning.
+#if defined(__GNUC__) && !defined(__clang__)
+#define KEEP_DISPATCH_SITES __attribute__((optimize("no-crossjumping,no-gcse")))
+#else
+#define KEEP_DISPATCH_SITES
+#endif
+static KEEP_DISPATCH_SITES void cpu_block(unsigned budget, int observe)
 {
     uint32_t pc,npc,*A=C.a,r,s,t,imm;
     decoded_t *d;
