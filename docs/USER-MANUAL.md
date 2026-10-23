@@ -1153,6 +1153,7 @@ criteria.
 | `Install libslirp-dev, libglib2.0-dev and pkg-config…` from `make network` | Install those packages: `sudo apt install -y libslirp-dev libglib2.0-dev pkg-config`. |
 | `network options require --net-profile` | `--net-forward`, `--net-host` and `--net-capture` only work together with `--net-profile`. |
 | `live networking requires a positive --speed (use 1)` | Network runs cannot use `--speed 0`. |
+| **max** is greyed out | The image runs on the virtual network, which needs real time. If you do not need the network, drop the `.bin` without its `.elf` (you lose the `setup()`/`loop()` stages), or start with `-Offline` (Windows) or `--offline` (Linux). |
 | The `speed` readout stays below `1.00×` | The host cannot keep up in real time. The results are still valid; use `max` for long runs. |
 | Saved settings disappeared after a rebuild | A new build has a new SHA-256 and therefore fresh flash ([section 7](#7-resets-flash-and-saved-state)). |
 | `evidence.py: error: --seconds must be a finite positive number` | Pass a positive `--seconds` value. |
