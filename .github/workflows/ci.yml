@@ -33,3 +33,19 @@ jobs:
           sudo apt-get install --no-install-recommends -y libslirp-dev libglib2.0-dev pkg-config
       - name: Build and check the network backend
         run: make -j2 network check-network-backend CC=gcc
+
+  macos:
+    runs-on: macos-14   # Apple Silicon
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build with Apple clang
+        run: make -j3
+      - name: Sanitizers, Python tests and synthetic watchdog
+        run: make -j3 check
+      - name: Network runner with Homebrew libslirp
+        run: |
+          brew install libslirp pkg-config
+          make -j3 network check-network-backend
