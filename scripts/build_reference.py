@@ -3,6 +3,7 @@
 
 import argparse
 import hashlib
+import json
 import os
 from pathlib import Path
 import shutil
@@ -15,12 +16,18 @@ CORE_SOURCES = (
     "libraries/ESP8266WiFi/src",
     "libraries/ESP8266HTTPClient/src",
     "libraries/ESP8266httpUpdate/src",
+    "libraries/EEPROM",
+    "libraries/ESP8266WebServer/src",
+    "libraries/ESP8266HTTPUpdateServer/src",
 )
 INPUT_DIRS = (
     "cores/esp8266",
     "libraries/ESP8266WiFi/src",
     "libraries/ESP8266HTTPClient/src",
     "libraries/ESP8266httpUpdate/src",
+    "libraries/EEPROM",
+    "libraries/ESP8266WebServer/src",
+    "libraries/ESP8266HTTPUpdateServer/src",
     "variants/generic",
     "tools/sdk/include",
     "tools/sdk/lwip2/include",
@@ -29,9 +36,12 @@ INPUT_DIRS = (
     "bootloaders/eboot",
 )
 EXTENSIONS = {".c", ".cpp", ".S"}
-FLASH_MODE = "dio"
 FLASH_FREQ = "40"
-FLASH_SIZE = "4M"
+FLASH_LINKER_SCRIPTS = {
+    "1M": "eagle.flash.1m64.ld",
+    "2M": "eagle.flash.2m64.ld",
+    "4M": "eagle.flash.4m1m.ld",
+}
 
 
 def run(command, *, cwd=None, capture=False):
@@ -90,7 +100,6 @@ def input_digest(core, bin_dir):
         if folder.is_dir():
             files.extend(p for p in folder.rglob("*") if p.is_file())
     files.append(Path(__file__).resolve())
-    files.append(Path(__file__).resolve().parents[1] / "examples/network_reference/reference.cpp")
     files.append(core / "platform.txt")
     files.append(core / "tools/elf2bin.py")
     for path in sorted(set(files)):
@@ -106,7 +115,7 @@ def input_digest(core, bin_dir):
     return digest.hexdigest()
 
 
-def compile_reference(core, bin_dir, build_dir, object_dir, version):
+def compile_reference(core, bin_dir, build_dir, object_dir, version, flash_size, flash_mode):
     toolroot = bin_dir.parent
     target = toolroot / "xtensa-lx106-elf"
     sdk = core / "tools/sdk"
@@ -120,6 +129,9 @@ def compile_reference(core, bin_dir, build_dir, object_dir, version):
         "libraries/ESP8266WiFi/src",
         "libraries/ESP8266HTTPClient/src",
         "libraries/ESP8266httpUpdate/src",
+        "libraries/EEPROM",
+        "libraries/ESP8266WebServer/src",
+        "libraries/ESP8266HTTPUpdateServer/src",
     )]
     object_dir.mkdir(parents=True, exist_ok=True)
 
@@ -162,7 +174,10 @@ def compile_reference(core, bin_dir, build_dir, object_dir, version):
             flags += ["-std=gnu++17", "-fno-rtti", "-fno-exceptions"]
         elif suffix == ".c":
             flags += ["-std=gnu17", "-fno-inline-functions"]
+        temporary = obj.with_name(obj.name + ".tmp")
+        flags[flags.index(str(obj))] = str(temporary)
         run([compiler, *flags])
+        temporary.replace(obj)
         object_files.append(obj)
 
     reference_source = Path(__file__).resolve().parents[1] / "examples/network_reference/reference.cpp"
@@ -185,7 +200,8 @@ def compile_reference(core, bin_dir, build_dir, object_dir, version):
          "-DVTABLES_IN_FLASH", "-DMMU_IRAM_SIZE=0x8000", "-DMMU_ICACHE_SIZE=0x8000",
          "-I" + str(ld_script), str(ld_script / "eagle.app.v6.common.ld.h"),
          "-o", common_ld])
-    shutil.copy2(ld_script / "eagle.flash.4m1m.ld", build_dir / "local.eagle.flash.ld")
+    shutil.copy2(ld_script / FLASH_LINKER_SCRIPTS[flash_size],
+                 build_dir / "local.eagle.flash.ld")
 
     sdk_lib = sdk / "lib"
     libc_lib = libc / "lib"
@@ -210,8 +226,8 @@ def compile_reference(core, bin_dir, build_dir, object_dir, version):
     elf2bin = core / "tools/elf2bin.py"
     firmware = build_dir / "reference.bin"
     run([sys.executable, "-I", elf2bin, "--eboot", core / "bootloaders/eboot/eboot.elf",
-         "--app", elf, "--flash_mode", FLASH_MODE, "--flash_freq", FLASH_FREQ,
-         "--flash_size", FLASH_SIZE, "--path", bin_dir, "--out", firmware])
+         "--app", elf, "--flash_mode", flash_mode, "--flash_freq", FLASH_FREQ,
+         "--flash_size", flash_size, "--path", bin_dir, "--out", firmware])
     return elf, firmware
 
 
@@ -225,6 +241,10 @@ def main():
                         help="directory for the ELF, BIN, and build cache")
     parser.add_argument("--version", required=True, choices=("A", "B"),
                         help="A accepts OTA requests; B reports itself and ignores them")
+    parser.add_argument("--flash-size", choices=tuple(FLASH_LINKER_SCRIPTS), default="4M",
+                        help="physical flash size and matching linker map (default: 4M)")
+    parser.add_argument("--flash-mode", choices=("dio", "dout"), default="dio",
+                        help="SPI flash mode (default: dio)")
     args = parser.parse_args()
     core = args.core.resolve()
     if not (core / "platform.txt").is_file():
@@ -238,24 +258,48 @@ def main():
         args.out.mkdir(parents=True, exist_ok=True)
         key = input_digest(core, bin_dir)
         cache_root = args.out / ".cache" / key
-        cache = cache_root / args.version
+        fixture = Path(__file__).resolve().parents[1] / "examples/network_reference/reference.cpp"
+        fixture_hash = hashlib.sha256(fixture.read_bytes()).hexdigest()
+        variant = f"{args.version}-{args.flash_size}-{args.flash_mode}"
+        cache = cache_root / (variant + "-" + fixture_hash[:16])
         elf_cache = cache / "reference.elf"
         bin_cache = cache / "reference.bin"
-        if not (elf_cache.is_file() and bin_cache.is_file()):
+        marker = cache / "build.json"
+        def file_hash(path):
+            return hashlib.sha256(path.read_bytes()).hexdigest()
+        try:
+            saved = json.loads(marker.read_text())
+            complete = (saved['bin_sha256'] == file_hash(bin_cache) and
+                        saved['elf_sha256'] == file_hash(elf_cache) and
+                        saved['version'] == args.version and
+                        saved['flash_size'] == args.flash_size and
+                        saved['flash_mode'] == args.flash_mode and
+                        saved['fixture_sha256'] == fixture_hash and
+                        saved['core_inputs_sha256'] == key)
+        except (OSError, ValueError, KeyError):
+            complete = False
+        if not complete:
             if cache.exists():
                 shutil.rmtree(cache)
             cache.mkdir(parents=True)
             elf, firmware = compile_reference(core, bin_dir, cache,
-                                               cache_root / "objects", args.version)
+                                               cache_root / "objects", args.version,
+                                               args.flash_size, args.flash_mode)
             if not elf.is_file() or not firmware.is_file():
                 raise RuntimeError("compiler completed without producing ELF and BIN files")
-        output = args.out / args.version
+            marker.write_text(json.dumps({'core_version': '3.1.2', 'version': args.version,
+                'flash_size': args.flash_size, 'flash_mode': args.flash_mode,
+                'linker_script': FLASH_LINKER_SCRIPTS[args.flash_size],
+                'core_inputs_sha256': key, 'fixture_sha256': fixture_hash,
+                'bin_sha256': file_hash(bin_cache), 'elf_sha256': file_hash(elf_cache)}, indent=2) + '\n')
+        output = args.out / variant
         output.mkdir(parents=True, exist_ok=True)
         shutil.copy2(elf_cache, output / "reference.elf")
         shutil.copy2(bin_cache, output / "reference.bin")
+        shutil.copy2(marker, output / "build.json")
         print(f"ELF: {output / 'reference.elf'}")
         print(f"BIN: {output / 'reference.bin'}")
-        print(f"cache key: {key}")
+        print(f"cache key: {key} ({args.flash_size}, {args.flash_mode})")
     except (ValueError, RuntimeError) as exc:
         print(f"build_reference: {exc}", file=sys.stderr)
         return 2
