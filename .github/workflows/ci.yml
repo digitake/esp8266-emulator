@@ -30,6 +30,6 @@ jobs:
       - name: Install network build tools
         run: |
           sudo apt-get update
-          sudo apt-get install --no-install-recommends -y libslirp-dev pkg-config
+          sudo apt-get install --no-install-recommends -y libslirp-dev libglib2.0-dev pkg-config
       - name: Build and check the network backend
         run: make -j2 network check-network-backend CC=gcc

@@ -15,14 +15,14 @@ $(OUT): $(SRC) $(HEADERS)
 
 build/esp8266emu-net: $(SRC) $(HEADERS)
 	@mkdir -p build
-	@test -n "$(SLIRP_LIBS)" || { printf '%s\n' 'Install libslirp-dev and pkg-config, or set SLIRP_CFLAGS and SLIRP_LIBS.' >&2; exit 2; }
+	@test -n "$(SLIRP_LIBS)" || { printf '%s\n' 'Install libslirp-dev, libglib2.0-dev and pkg-config, or set SLIRP_CFLAGS and SLIRP_LIBS.' >&2; exit 2; }
 	$(CC) $(CFLAGS) -DHAVE_SLIRP $(SLIRP_CFLAGS) -o $@ $(SRC) -lm $(SLIRP_LIBS)
 
 network: build/esp8266emu-net
 
 build/test-host-net: tests/host_net.c src/host_net.c $(HEADERS)
 	@mkdir -p build
-	@test -n "$(SLIRP_LIBS)" || { printf '%s\n' 'Install libslirp-dev and pkg-config, or set SLIRP_CFLAGS and SLIRP_LIBS.' >&2; exit 2; }
+	@test -n "$(SLIRP_LIBS)" || { printf '%s\n' 'Install libslirp-dev, libglib2.0-dev and pkg-config, or set SLIRP_CFLAGS and SLIRP_LIBS.' >&2; exit 2; }
 	$(CC) $(TEST_CFLAGS) -DHAVE_SLIRP $(SLIRP_CFLAGS) -Isrc -o $@ tests/host_net.c src/host_net.c $(SLIRP_LIBS)
 
 check-network-backend: build/test-host-net
