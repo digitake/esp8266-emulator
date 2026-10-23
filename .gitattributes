@@ -2,3 +2,4 @@
 *.ps1 text eol=crlf
 *.bin binary
 *.elf binary
+*.cmd text eol=crlf
