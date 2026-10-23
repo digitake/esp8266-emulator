@@ -203,6 +203,20 @@ static void emit_stat(uint64_t nowns)
               (unsigned long long)uart_total[0], speed, ratio);
 }
 
+// --net-profile runs only: station state for the GUI. stats.ip is in lwIP memory order (first octet lowest).
+static void emit_net(void)
+{
+    if (!net_profile_requested()) return;
+    net_stats_t s = net_get_stats();
+    net_profile_match_t m = net_profile_match();
+    ev_printf("{\"t\":\"net\",\"bound\":%s,\"image\":%u,\"connected\":%s,\"ip\":\"%u.%u.%u.%u\","
+              "\"tx\":%llu,\"rx\":%llu,\"tx_rejected\":%llu,\"rx_dropped\":%llu}",
+              m.active ? "true" : "false", m.image_index, s.connected ? "true" : "false",
+              s.ip & 255, (s.ip >> 8) & 255, (s.ip >> 16) & 255, s.ip >> 24,
+              (unsigned long long)s.tx_packets, (unsigned long long)s.rx_packets,
+              (unsigned long long)s.tx_rejected, (unsigned long long)s.rx_dropped);
+}
+
 static void save_flash(void)
 {
     if (!flash_out || !E.flash_dirty) return;
@@ -367,6 +381,7 @@ void host_service(void)
     if (nowns - last_stat_ns > 500000000ull) {
         last_stat_ns = nowns;
         emit_stat(nowns);
+        emit_net();
         save_flash();
     }
     if (speed > 0) {
