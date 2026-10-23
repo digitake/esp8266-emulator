@@ -38,17 +38,28 @@ Know its limits:
 
 ### 1. Install the tools
 
-You need Linux, or Windows 10/11 with WSL running Ubuntu. On Windows, first run
-`wsl --install -d Ubuntu` in an administrator PowerShell, then open the Ubuntu
-app. In Ubuntu:
+You need Linux, macOS, or Windows 10/11 with WSL running Ubuntu. No Python
+packages, Node.js or frontend build are needed.
 
-```sh
-sudo apt update
-sudo apt install -y build-essential python3 git libslirp-dev libglib2.0-dev pkg-config
-```
+- **Windows:** first run `wsl --install -d Ubuntu` in an administrator
+  PowerShell, then open the Ubuntu app and continue as on Linux.
+- **Linux or Ubuntu:**
 
-The last three packages are optional; they give dropped firmware its virtual
-network. No Python packages, Node.js or frontend build are needed.
+  ```sh
+  sudo apt update
+  sudo apt install -y build-essential python3 git libslirp-dev libglib2.0-dev pkg-config
+  ```
+
+- **macOS:** install Apple's command line tools, which bring clang, make, git and
+  Python 3. For the network, also install [Homebrew](https://brew.sh)'s libslirp:
+
+  ```sh
+  xcode-select --install
+  brew install libslirp pkg-config
+  ```
+
+The libslirp packages are optional; they give dropped firmware its virtual
+network.
 
 ### 2. Get the code
 
@@ -59,14 +70,15 @@ git clone https://github.com/digitake/esp8266-emulator.git
 ### 3. Start it
 
 - **Windows:** double-click `emulator.cmd` in the cloned folder.
+- **macOS:** double-click `emulator.command` in the cloned folder.
 - **Linux or the Ubuntu shell:** run `bash run-gui.sh` in the cloned folder.
 
 The first start builds the emulator, which takes a minute. Then the GUI is at
-**http://127.0.0.1:8266/**, and on Windows your browser opens it. Ctrl+C or
-closing the window stops it.
+**http://127.0.0.1:8266/**, and on Windows and macOS your browser opens it.
+Ctrl+C or closing the window stops it.
 
-To start it from any folder by typing `esp8266emu`, run `.\emulator.cmd -Install`
-once in PowerShell.
+On Windows, to start it from any folder by typing `esp8266emu`, run
+`.\emulator.cmd -Install` once in PowerShell.
 
 ### 4. Drop your firmware on the page
 
@@ -93,6 +105,7 @@ Things to try with it:
 - Press **Reset**, then **Power cycle**, and watch the Boot card's reset history.
 
 Start with `.\emulator.cmd -ProfileFile examples\gpio-profile.json` (or
+`./emulator.command --profile-file examples/gpio-profile.json` on macOS, or
 `bash run-gui.sh --profile-file examples/gpio-profile.json`) to also see the
 example's button, relay and LED on a faceplate.
 
@@ -148,7 +161,7 @@ the image. The GUI server only listens on 127.0.0.1 and refuses other host names
 
 | Folder | Contents |
 | --- | --- |
-| `emulator.cmd`, `run-gui.sh` | One-command launchers for Windows and Linux |
+| `emulator.cmd`, `emulator.command`, `run-gui.sh` | One-command launchers for Windows, macOS and Linux |
 | `src/` | The emulator in C: CPU, ROM services, peripherals, networking adapter |
 | `gui/` | Local web server (Python standard library) and the single-page GUI |
 | `scripts/` | Reports, regression, OTA, profiling and symbol tools |

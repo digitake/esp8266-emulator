@@ -72,8 +72,9 @@ git clone https://github.com/digitake/esp8266-emulator.git
 
 **Start it with one command.** On Windows, double-click `emulator.cmd` in the
 cloned folder, or run it from a terminal. It builds the emulator inside WSL, starts
-the GUI and opens **http://127.0.0.1:8266/** in your browser. On Linux, or in the
-Ubuntu shell, run `bash run-gui.sh` in the folder and open that address yourself.
+the GUI and opens **http://127.0.0.1:8266/** in your browser. On macOS,
+double-click `emulator.command`, which does the same. On Linux, or in the Ubuntu
+shell, run `bash run-gui.sh` in the folder and open that address yourself.
 
 **Drop your firmware on the page.** Drag `firmware.bin` and `firmware.elf` from
 your build folder onto the page. The chip boots at once. If libslirp is installed,
@@ -82,8 +83,8 @@ only your own computer ([Network](#network)).
 
 To stop the emulator, press Ctrl+C in its window or close the window.
 
-To start it from any folder by typing `esp8266emu`, run this once in the cloned
-folder:
+On Windows, to start it from any folder by typing `esp8266emu`, run this once in
+the cloned folder:
 
 ```powershell
 .\emulator.cmd -Install
@@ -129,10 +130,10 @@ The rest of this manual explains each of these steps in detail.
 
 | Item | Requirement |
 | --- | --- |
-| Operating system | Linux, or Windows 10/11 with WSL running Ubuntu |
-| Tools | GCC (GNU C11), GNU Make, Python 3.8 or later |
+| Operating system | Linux, macOS 13 or later, or Windows 10/11 with WSL running Ubuntu |
+| Tools | GCC or clang (GNU C11), GNU Make, Python 3.8 or later |
 | Browser | Any current browser on the same computer |
-| Optional, virtual network | `libslirp-dev`, `libglib2.0-dev` and `pkg-config`. With them, the GUI gives Arduino 3.1.2 images Wi-Fi, and `make network` builds the headless network runner. |
+| Optional, virtual network | `libslirp-dev`, `libglib2.0-dev` and `pkg-config` (macOS: Homebrew `libslirp` and `pkg-config`). With them, the GUI gives Arduino 3.1.2 images Wi-Fi, and `make network` builds the headless network runner. |
 | Optional, example sketch | [PlatformIO Core](https://docs.platformio.org/en/latest/core/installation/index.html), only to build [examples/hello](../examples/hello) |
 
 No Python packages, Node.js or frontend build are needed. On Ubuntu, native or
@@ -160,9 +161,20 @@ You can keep the repository on the Windows side, for example under
 `C:\Users\you\Dev`. Ubuntu reaches it as `/mnt/c/Users/you/Dev/...`, and the
 Windows launcher translates paths for you.
 
+On macOS, Apple's command line tools bring clang, make, git and Python 3. For the
+virtual network, add libslirp from [Homebrew](https://brew.sh):
+
+```sh
+xcode-select --install
+brew install libslirp pkg-config
+```
+
+The build uses Apple clang. GitHub's checks build and test it on Apple Silicon
+for every change.
+
 ### Build and self-check
 
-From the repository root (on Windows, in the Ubuntu shell):
+From the repository root (on Windows, in the Ubuntu shell; on macOS, in Terminal):
 
 ```sh
 make
@@ -280,6 +292,25 @@ your PATH already; delete that file to remove it.
 It does not offer `--speed`. Saved state lives in your WSL home folder, which
 Windows Explorer shows at
 `\\wsl$\Ubuntu\home\<linux-user>\.cache\esp8266-emulator`.
+
+### On macOS: emulator.command
+
+Double-click `emulator.command` in the repository folder, or run it in Terminal:
+
+```sh
+./emulator.command [run-gui.sh options]
+```
+
+It runs `run-gui.sh` (next section), so it takes the same options, for example
+`./emulator.command --port 8276 --offline`. It opens your browser as soon as the
+GUI answers. If the GUI already runs on that port, it opens it and exits. Ctrl+C
+or closing the Terminal window stops the emulator; after an error the window
+waits for Return so you can read the message.
+
+macOS blocks a `.command` file that came from a downloaded ZIP ("cannot be
+opened because it is from an unidentified developer"). A `git clone` does not
+have this problem. For a ZIP, right-click the file, choose **Open** and confirm
+once, or run `xattr -d com.apple.quarantine emulator.command` in the folder.
 
 ### From a Linux or WSL shell
 
@@ -1171,6 +1202,8 @@ criteria.
 | `gcc: not found` or `make: not found` | Install the build tools: `sudo apt install -y build-essential python3` |
 | `build the emulator first: make -C …` | `gui/server.py` was started directly. Run `make`, or use `run-gui.sh`, which builds first. |
 | `OSError: [Errno 98] Address already in use`, or `Port 8266 is already in use` from `emulator.cmd` | Another program, perhaps another emulator, uses the port. Start with `--port 8267` (Linux) or `-Port 8267` (Windows). If it is the emulator GUI itself, `emulator.cmd` just opens it. |
+| macOS: `xcrun: error: invalid active developer path` | The command line tools are missing. Run `xcode-select --install`, then start again. |
+| macOS: `emulator.command` "cannot be opened" | The file came from a downloaded ZIP. Right-click it, choose **Open** and confirm, or use `git clone` ([section 5](#on-macos-emulatorcommand)). |
 | PowerShell: running scripts is disabled | Use `powershell -ExecutionPolicy Bypass -File .\run-gui.ps1 …` |
 | `wslpath failed for …` | The Windows path does not exist, or `-Distro` names a distribution that is not installed (`wsl -l -q`). |
 | Browser shows `forbidden host` | Open exactly `http://127.0.0.1:<port>/` or `http://localhost:<port>/`, with the port the server printed. |
@@ -1225,6 +1258,9 @@ make && make check
 # GUI (Linux/WSL): open http://127.0.0.1:8266/ and drop fw.bin + fw.elf on it.
 # With libslirp, Arduino 3.1.2 images get a local-only network by themselves.
 bash run-gui.sh [--profile-file board.json] [--port N] [--offline | --internet]
+
+# GUI on macOS: double-click emulator.command, or (same options, opens the browser)
+./emulator.command [--profile-file board.json] [--port N] [--offline | --internet]
 
 # Quick headless boot check
 build/esp8266emu --flash fw.bin --speed 0 --max-seconds 10 --no-stdin --quiet

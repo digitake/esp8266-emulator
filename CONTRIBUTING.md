@@ -1,6 +1,6 @@
 # Contributing
 
-Build and test in Linux or WSL Ubuntu with GCC, Make and Python 3:
+Build and test in Linux, WSL Ubuntu or macOS with GCC or clang, Make and Python 3:
 
 ```sh
 make

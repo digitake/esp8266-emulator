@@ -6,7 +6,8 @@ still runs its own TCP/IP and application protocols, while the adapter supplies
 station state and Wi-Fi events. It does not emulate radio association or RF.
 
 The default build stays offline. Build the network runner on Linux or WSL with
-the `libslirp-dev`, `libglib2.0-dev` and `pkg-config` packages installed:
+the `libslirp-dev`, `libglib2.0-dev` and `pkg-config` packages installed, or on
+macOS after `brew install libslirp pkg-config`:
 
 ```sh
 make network
