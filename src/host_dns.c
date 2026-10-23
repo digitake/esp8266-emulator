@@ -17,6 +17,8 @@ typedef struct {
 
 static host_dns_entry_t entries[HOST_DNS_MAX_ENTRIES];
 static size_t entry_count;
+static host_dns_entry_t fallback; // answers every other name once set (--net-local)
+static bool fallback_set;
 
 static uint16_t read_u16(const uint8_t *p)
 {
@@ -129,10 +131,38 @@ bool host_dns_add(const char *name, const char *ipv4, char *err, size_t err_size
     return true;
 }
 
+bool host_dns_set_fallback(const char *ipv4, char *err, size_t err_size)
+{
+    if (!ipv4_parse(ipv4, fallback.address)) {
+        error_text(err, err_size, "invalid IPv4 address");
+        return false;
+    }
+    fallback_set = true;
+    if (err && err_size) err[0] = '\0';
+    return true;
+}
+
+bool host_dns_frame_is_local(const uint8_t *ethernet, size_t len)
+{
+    if (!ethernet || len < ETHERNET_HEADER_SIZE) return false;
+    uint16_t type = read_u16(ethernet + 12);
+    if (type == 0x0806) return true;                          // ARP stays on the virtual segment
+    if (type != 0x0800 || len < ETHERNET_HEADER_SIZE + IPV4_HEADER_SIZE) return false;
+    const uint8_t *ip = ethernet + ETHERNET_HEADER_SIZE;
+    if ((ip[0] >> 4) != 4) return false;
+    const uint8_t *dst = ip + 16;
+    if (dst[0] == 255 && dst[1] == 255 && dst[2] == 255 && dst[3] == 255) return true; // DHCP
+    if ((dst[0] & 0xf0) == 0xe0) return true;                 // multicast never leaves the segment
+    if (dst[0] != 10 || dst[1] != 0 || dst[2] != 2) return false;
+    return dst[3] != 3; // the backend's resolver: only answers from the overrides above may reach the guest
+}
+
 void host_dns_clear(void)
 {
     memset(entries, 0, sizeof entries);
     entry_count = 0;
+    memset(&fallback, 0, sizeof fallback);
+    fallback_set = false;
 }
 
 static bool query_name(const uint8_t *dns, size_t dns_len, char name[254], size_t *question_end)
@@ -177,7 +207,7 @@ static const host_dns_entry_t *lookup(const char *name)
 {
     for (size_t i = 0; i < entry_count; i++)
         if (strcmp(entries[i].name, name) == 0) return &entries[i];
-    return NULL;
+    return fallback_set ? &fallback : NULL;
 }
 
 size_t host_dns_reply(const uint8_t *ethernet, size_t len, uint8_t *reply, size_t cap)

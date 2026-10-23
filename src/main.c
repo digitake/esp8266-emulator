@@ -512,6 +512,8 @@ static void usage(void)
         "  --net-forward HOST:GUEST   forward a loopback TCP port to 10.0.2.15\n"
         "  --net-capture FILE     write raw Ethernet packets to a PCAP file\n"
         "  --net-host NAME=IP     override a guest DNS A record for a test server\n"
+        "  --net-local            keep the guest on this host: other names resolve to 10.0.2.2\n"
+        "                         and packets for any other network are dropped\n"
         "  --flash-out FILE       persist flash writes (config, OTA) to FILE\n"
         "  --speed X              1 = real time (default), 0 = as fast as possible\n"
         "  --max-seconds S        stop after S seconds of emulated time\n"
@@ -530,6 +532,7 @@ int main(int argc, char **argv)
     uint32_t forced_size = 0, forced_id = 0;
     const char *network_profile = NULL, *network_capture = NULL;
     unsigned forwards[16][2], forward_count = 0, dns_count = 0;
+    bool network_local = false;
     signal(SIGPIPE, SIG_IGN);
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i];
@@ -554,6 +557,7 @@ int main(int argc, char **argv)
         }
         else if (!strcmp(a, "--net-profile") && v) { network_profile = v; i++; }
         else if (!strcmp(a, "--net-capture") && v) { network_capture = v; i++; }
+        else if (!strcmp(a, "--net-local")) network_local = true;
         else if (!strcmp(a, "--net-host") && v) {
             const char *separator = strchr(v, '=');
             char name[254], error[128];
@@ -595,7 +599,7 @@ int main(int argc, char **argv)
     }
     if (!flash_path) usage();
     load_flash(forced_size, forced_id);
-    if (!network_profile && (network_capture || forward_count || dns_count)) {
+    if (!network_profile && (network_capture || forward_count || dns_count || network_local)) {
         fprintf(stderr, "network options require --net-profile\n"); return 2;
     }
     if (network_profile) {
@@ -606,6 +610,12 @@ int main(int argc, char **argv)
         if (!net_profile_load(network_profile, error, sizeof error) ||
             !host_net_open(network_capture, error, sizeof error)) {
             fprintf(stderr, "network: %s\n", error); return 2;
+        }
+        if (network_local) {     // names without an override lead to this host, nothing else leaves
+            if (!host_dns_set_fallback("10.0.2.2", error, sizeof error)) {
+                fprintf(stderr, "network: %s\n", error); return 2;
+            }
+            host_net_set_local_only();
         }
         for (unsigned i = 0; i < forward_count; i++)
             if (!host_net_forward(forwards[i][0], forwards[i][1], error, sizeof error)) {

@@ -7,6 +7,10 @@
 #include <string.h>
 #include <time.h>
 
+static bool local_only; // --net-local: guest frames that would leave the virtual network are dropped
+
+void host_net_set_local_only(void) { local_only = true; }
+
 #ifdef HAVE_SLIRP
 #include <libslirp.h>
 #include <poll.h>
@@ -151,9 +155,11 @@ static bool send_packet(void *opaque, const uint8_t *frame, size_t size)
 {
     (void)opaque;
     if (!host.slirp || size < 14 || size > NET_FRAME_MAX) return false;
-    capture(frame, size);
     uint8_t answer[NET_FRAME_MAX];
     size_t answer_size = host_dns_reply(frame, size, answer, sizeof answer);
+    // Accepted and discarded, as a network drops a packet: an error would make the guest's stack retry at once
+    if (!answer_size && local_only && !host_dns_frame_is_local(frame, size)) return true;
+    capture(frame, size);
     if (answer_size) {
         receive_packet(answer, answer_size, NULL);
         return true;

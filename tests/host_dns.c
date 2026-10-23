@@ -230,12 +230,59 @@ static void test_passthrough_and_bounds(void)
     host_dns_clear();
 }
 
+static void test_local_fallback(void)
+{
+    char err[128];
+    uint8_t query[1518], reply[1518];
+    assert(!host_dns_set_fallback("10.0.2", err, sizeof err));
+    assert(host_dns_add("broker.example.test", "10.0.2.9", err, sizeof err));
+    assert(host_dns_set_fallback("10.0.2.2", err, sizeof err));
+    size_t len = make_query(query, "broker.example.test", 1); // an override still wins
+    size_t reply_len = host_dns_reply(query, len, reply, sizeof reply);
+    assert(reply_len && !memcmp(reply + reply_len - 4, (uint8_t[]){10, 0, 2, 9}, 4));
+    len = make_query(query, "anything.example.com", 1);       // every other name leads to the host
+    reply_len = host_dns_reply(query, len, reply, sizeof reply);
+    assert(reply_len && !memcmp(reply + reply_len - 4, (uint8_t[]){10, 0, 2, 2}, 4));
+    len = make_query(query, "anything.example.com", 28);      // AAAA: not answered...
+    assert(host_dns_reply(query, len, reply, sizeof reply) == 0);
+    assert(!host_dns_frame_is_local(query, len));              // ...and not let through to the resolver
+    host_dns_clear();
+    len = make_query(query, "anything.example.com", 1);
+    assert(host_dns_reply(query, len, reply, sizeof reply) == 0); // clear removes the fallback
+}
+
+static void test_local_frames(void)
+{
+    uint8_t frame[1518];
+    size_t len = make_query(frame, "x.test", 1);
+    uint8_t *dst = frame + 14 + 16;
+    static const uint8_t allowed[][4] = {{10, 0, 2, 2}, {10, 0, 2, 15}, {255, 255, 255, 255}, {224, 0, 0, 251}};
+    static const uint8_t refused[][4] = {{10, 0, 2, 3}, {8, 8, 8, 8}, {10, 0, 3, 2}, {192, 168, 1, 1}, {127, 0, 0, 1}};
+    for (size_t i = 0; i < sizeof allowed / sizeof allowed[0]; i++) {
+        memcpy(dst, allowed[i], 4);
+        assert(host_dns_frame_is_local(frame, len));
+    }
+    for (size_t i = 0; i < sizeof refused / sizeof refused[0]; i++) {
+        memcpy(dst, refused[i], 4);
+        assert(!host_dns_frame_is_local(frame, len));
+    }
+    put16(frame + 12, 0x0806);                 // ARP
+    assert(host_dns_frame_is_local(frame, 42));
+    put16(frame + 12, 0x86dd);                 // IPv6 could route around the IPv4 checks
+    assert(!host_dns_frame_is_local(frame, len));
+    put16(frame + 12, 0x0800);
+    assert(!host_dns_frame_is_local(frame, 20)); // truncated IPv4
+    assert(!host_dns_frame_is_local(NULL, len));
+}
+
 int main(void)
 {
     host_dns_clear();
     test_mapping_and_checksums();
     test_rejected_mappings();
     test_passthrough_and_bounds();
+    test_local_fallback();
+    test_local_frames();
     puts("host DNS override tests passed");
     return 0;
 }
