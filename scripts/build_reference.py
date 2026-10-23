@@ -31,6 +31,7 @@ INPUT_DIRS = (
     "variants/generic",
     "tools/sdk/include",
     "tools/sdk/lwip2/include",
+    "tools/sdk/ssl/bearssl/inc",
     "tools/sdk/ld",
     "tools/sdk/lib/NONOSDK22x_190703",
     "bootloaders/eboot",
@@ -94,6 +95,9 @@ def input_digest(core, bin_dir):
             raise ValueError(f"missing Arduino core input directory: {folder}")
         files.extend(p for p in folder.rglob("*") if p.is_file())
     files.extend(p for p in (core / "tools/sdk/lib").glob("*.a") if p.is_file())
+    packaged_libc = core / "tools/sdk/libc"
+    if packaged_libc.is_dir():
+        files.extend(p for p in packaged_libc.rglob("*") if p.is_file())
     for folder in (bin_dir.parent / "include",
                    bin_dir.parent / "xtensa-lx106-elf/include",
                    bin_dir.parent / "xtensa-lx106-elf/lib"):
