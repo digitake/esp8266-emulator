@@ -15,6 +15,20 @@ def crc8266(data):
     return network_profile.crc8266(data)
 
 
+def crc8266_bitwise(data):
+    """The bit-at-a-time definition the table-driven crc8266 must reproduce."""
+    crc = 0xffffffff
+    for byte in data:
+        for bitmask in (0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x01):
+            bit = bool(crc & 0x80000000)
+            if byte & bitmask:
+                bit = not bit
+            crc = (crc << 1) & 0xffffffff
+            if bit:
+                crc ^= 0x04c11db7
+    return crc
+
+
 def make_elf(symbol_names=None, aliases=False, bad_addr=False):
     names = list(network_profile.SYMBOLS if symbol_names is None else symbol_names)
     text = bytes(range(64))
@@ -97,6 +111,14 @@ class NetworkProfileTests(unittest.TestCase):
         bin_path.write_bytes(image)
         elf_path.write_bytes(elf)
         return bin_path, elf_path, image, elf
+
+    def test_table_crc_matches_the_bitwise_definition(self):
+        samples = [b'', b'\0', b'\xff' * 7, b'123456789', bytes(range(256)) * 3,
+                   hashlib.sha256(b'esp8266').digest() * 40]
+        for data in samples:
+            with self.subTest(size=len(data)):
+                self.assertEqual(network_profile.crc8266(data), crc8266_bitwise(data))
+        self.assertEqual(network_profile.crc8266(b'123456789'), 0x0376e6e7)   # CRC-32/MPEG-2 check value
 
     def test_generates_checked_profile_with_absolute_paths_and_hashes(self):
         with tempfile.TemporaryDirectory(prefix='network fixture ') as directory:

@@ -4,12 +4,14 @@
 Drop a firmware .bin (optionally with its .elf) on the page and the emulated chip boots it immediately.
 The page shows the UART console (secrets masked), the pins (relay/LED/button roles per device profile),
 the boot stage and what the firmware's UART says about Wi-Fi, and has button/reset/power controls.
-With --net-profile, images that the profile binds run on the experimental virtual network (esp8266emu-net).
+When the network runner (esp8266emu-net, needs libslirp) builds, a .bin dropped with its .elf that is an
+Arduino core 3.1.2/lwIP2 image runs on the experimental virtual network, local-only unless --internet:
+every name resolves to this host and nothing leaves it. --net-profile binds a fixed set of images instead.
 
 stdlib only (python3 >= 3.8). Runs where esp8266emu runs (WSL/Linux).
 """
-import argparse, hashlib, http.server, ipaddress, json, math, os, queue, re, signal, socketserver, subprocess
-import sys, tempfile, threading, time, urllib.parse
+import argparse, glob, hashlib, http.server, ipaddress, json, math, os, queue, re, signal, socket, socketserver
+import subprocess, sys, tempfile, threading, time, urllib.parse
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CHIP = os.path.dirname(HERE)
@@ -17,6 +19,7 @@ sys.path.insert(0, os.path.join(CHIP, 'scripts'))
 from mask import StreamMasker        # noqa: E402
 from elfsyms import arduino_hooks    # noqa: E402
 from profiles import load_profile   # noqa: E402
+from network_profile import CORE_VERSION, build_profile, check_image   # noqa: E402
 
 MAX_UPLOAD = 16 * 1024 * 1024
 BACKLOG_LINES = 1500
@@ -25,6 +28,9 @@ PROFILES = {'generic': load_profile()}
 DEFAULT_PROFILE = 'generic'
 
 OFFLINE = 'unavailable: no host network bridge'
+NO_RUNNER = ('offline: the network runner is not built. Install libslirp, then start the GUI again: '
+             'sudo apt install -y libslirp-dev libglib2.0-dev pkg-config')
+NEED_ELF = 'offline: drop the .elf together with the .bin to give this image a network'
 NET_PROFILE_HEADER = 'esp8266-net-v2 arduino-3.1.2-lwip2'
 NET_SPEED_ERROR = 'live networking needs a positive speed: the network runner refuses 0 (max)'
 NET_MAX = 16  # forwards and DNS overrides the runner accepts
@@ -67,6 +73,20 @@ def net_host(text):
     except ValueError:
         raise argparse.ArgumentTypeError('expected NAME=IPv4 with a dotted IPv4 address')
     return name + '=' + ip
+
+
+def free_port(start, avoid=()):
+    """The first loopback port from start on that nothing listens on, or None."""
+    for port in range(start, min(start + 100, 65536)):
+        if port in avoid:
+            continue
+        with socket.socket() as s:
+            try:
+                s.bind(('127.0.0.1', port))
+                return port
+            except OSError:
+                continue
+    return None
 
 
 def flash_size_from_header(b3):
@@ -217,10 +237,14 @@ class Hub:
 
 
 class Emulator:
-    def __init__(self, hub, workdir, exe, speed, net=None):
+    def __init__(self, hub, workdir, exe, speed, net=None, offline=OFFLINE):
         self.hub, self.workdir, self.exe = hub, workdir, exe
-        self.net = net              # None, or dict: exe, profile, forwards [(host, guest)], hosts [NAME=IP], capture
+        # None, or dict: exe, profile (None = made per image), forwards [(host, guest)], hosts [NAME=IP], capture,
+        # local (--net-local), gui_port
+        self.net = net
+        self.offline = offline      # host-network badge when there is no network runner
         self.net_live = False       # the running process is the network runner
+        self.net_checked = {}       # (bin sha, elf path) -> None when the image can use the network, else why not
         self.proc = None
         self.lock = threading.RLock()  # serializes process changes and commands
         self.event_lock = threading.Lock()
@@ -230,30 +254,86 @@ class Emulator:
         self.fw = FirmwareState()
 
     def network_for(self, image):
-        """(live, badge): the network runner only for an image the profile binds by its exact SHA-256."""
+        """(args, badge): runner arguments, empty when offline. With --net-profile only for an image the profile
+        binds by its exact SHA-256; otherwise for any uploaded image with an ELF that passes the profile checks."""
         if not self.net:
-            return False, OFFLINE
-        try:
-            digests = net_profile_digests(self.net['profile'])   # read again: the profile may have been regenerated
-        except (OSError, ValueError) as e:
-            return False, 'offline: network profile unusable (%s)' % e
-        if image['sha'] not in digests:
-            return False, ('offline: this image (sha256 %s…) is not in the network profile; regenerate the profile '
-                           'with scripts/network_profile.py for this BIN and its ELF' % image['sha'][:12])
+            return [], self.offline
+        if self.net.get('profile'):
+            profile = self.net['profile']
+            try:
+                digests = net_profile_digests(profile)   # read again: the profile may have been regenerated
+            except (OSError, ValueError) as e:
+                return [], 'offline: network profile unusable (%s)' % e
+            if image['sha'] not in digests:
+                return [], ('offline: this image (sha256 %s…) is not in the network profile; regenerate the profile '
+                            'with scripts/network_profile.py for this BIN and its ELF' % image['sha'][:12])
+        else:
+            why = self.net_check(image)
+            if why:
+                return [], why
+            try:
+                profile = self.auto_profile(image)
+            except (OSError, ValueError) as e:
+                return [], 'offline: cannot write the network profile (%s)' % e
+        forwards = self.net['forwards']
+        if not forwards and not self.net.get('profile'):   # the guest's web server, on the first free port from 8080
+            port = free_port(8080, {self.net.get('gui_port')})
+            forwards = [(port, 80)] if port else []
         badges = {'virtual station': 'starting', 'IP': '-', 'packets': '-'}
-        for host, guest in self.net['forwards']:
+        for host, guest in forwards:
             key = 'guest :%d' % guest
             badges[key if key not in badges else '%s via %d' % (key, host)] = 'http://127.0.0.1:%d/' % host
-        return True, badges
+        if self.net.get('local'):
+            badges['internet'] = 'off: every name leads to this PC (10.0.2.2)'
+        return self.net_args(profile, forwards), badges
 
-    def net_args(self):
-        args = ['--net-profile', self.net['profile']]
-        for host, guest in self.net['forwards']:
+    def net_check(self, image):
+        """None when an uploaded image can run on the virtual network, else the offline badge. Cached per BIN and ELF."""
+        if not image.get('elf'):
+            return NEED_ELF
+        key = (image['sha'], image['elf'])
+        if key not in self.net_checked:
+            try:
+                with open(self.paths(image['sha'])[0], 'rb') as b, open(image['elf'], 'rb') as e:
+                    check_image(b.read(), e.read(), image.get('name', 'image'))
+                self.net_checked[key] = None
+            except (OSError, ValueError) as e:
+                self.net_checked[key] = 'offline: not an Arduino core %s/lwIP2 network image (%s)' % (CORE_VERSION, e)
+        return self.net_checked[key]
+
+    def auto_profile(self, image):
+        """A profile for this image and up to 7 other uploaded images that pass, newest first: an OTA from one to
+        another keeps its network. Written to the work directory for every start."""
+        d = os.path.join(self.workdir, 'images')
+        pairs = [(image['sha'], image['elf'])]
+        for meta in sorted(glob.glob(os.path.join(d, '*.json')), key=os.path.getmtime, reverse=True):
+            if len(pairs) == 8:
+                break
+            try:
+                with open(meta, encoding='utf-8') as f:
+                    other = json.load(f)
+            except (OSError, ValueError):
+                continue
+            if not isinstance(other, dict) or not re.fullmatch(r'[0-9a-f]{64}', str(other.get('sha'))):
+                continue
+            if other['sha'] == image['sha'] or not other.get('elf') or not os.path.exists(other['elf']):
+                continue
+            if self.net_check(other) is None:
+                pairs.append((other['sha'], other['elf']))
+        path = os.path.join(self.workdir, 'network-profile.txt')
+        atomic_write(path, build_profile([(self.paths(sha)[0], elf) for sha, elf in pairs], CORE_VERSION).encode())
+        return path
+
+    def net_args(self, profile=None, forwards=None):
+        args = ['--net-profile', profile or self.net['profile']]
+        for host, guest in self.net['forwards'] if forwards is None else forwards:
             args += ['--net-forward', '%d:%d' % (host, guest)]
         for entry in self.net['hosts']:
             args += ['--net-host', entry]
         if self.net.get('capture'):
             args += ['--net-capture', self.net['capture']]
+        if self.net.get('local'):
+            args += ['--net-local']
         return args
 
     def paths(self, sha):
@@ -286,14 +366,14 @@ class Emulator:
             if fresh and os.path.exists(flashp):
                 os.remove(flashp)
             src = flashp if os.path.exists(flashp) else binp
-            live, network = self.network_for(image)
+            net_args, network = self.network_for(image)
+            live = bool(net_args)
             note = None
             if live and not self.speed > 0:
                 self.speed, note = 1.0, 'speed set to 1×: ' + NET_SPEED_ERROR
             self.net_live = live
             cmd = [self.net['exe'] if live else self.exe, '--flash', src, '--flash-out', flashp, '--speed', str(self.speed)]
-            if live:
-                cmd += self.net_args()
+            cmd += net_args
             if image.get('elf'):
                 try:
                     st, lp = arduino_hooks(image['elf'])
@@ -622,13 +702,14 @@ class Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
 
 def check_net_options(ap, a):
     """Refuse at launch what the network runner would refuse each time it starts."""
-    if not (math.isfinite(a.speed) and a.speed > 0):
-        ap.error('--net-profile needs a positive --speed (1 = real time): the network runner refuses 0')
-    a.net_profile = os.path.abspath(a.net_profile)
-    try:
-        net_profile_digests(a.net_profile)
-    except (OSError, ValueError) as error:
-        ap.error('--net-profile %s: %s' % (a.net_profile, error))
+    if a.net_profile:
+        if not (math.isfinite(a.speed) and a.speed > 0):
+            ap.error('--net-profile needs a positive --speed (1 = real time): the network runner refuses 0')
+        a.net_profile = os.path.abspath(a.net_profile)
+        try:
+            net_profile_digests(a.net_profile)
+        except (OSError, ValueError) as error:
+            ap.error('--net-profile %s: %s' % (a.net_profile, error))
     hosts = [h for h, _ in a.net_forward]
     if len(a.net_forward) > NET_MAX or len(a.net_host) > NET_MAX:
         ap.error('at most %d --net-forward and %d --net-host options' % (NET_MAX, NET_MAX))
@@ -643,14 +724,20 @@ def check_net_options(ap, a):
             ap.error('--net-capture: no such directory %s' % os.path.dirname(a.net_capture))
 
 
-def build_net_runner():
-    """make build/esp8266emu-net (a no-op when current), or exit with what to install."""
+def build_net_runner(required=True):
+    """make build/esp8266emu-net (a no-op when current). Without libslirp: exit with what to install, or None
+    when the network is optional."""
     exe = os.path.join(CHIP, 'build', 'esp8266emu-net')
     try:
-        code = subprocess.run(['make', '-s', '-C', CHIP, 'network']).returncode
+        code = subprocess.run(['make', '-s', '-C', CHIP, 'network'],
+                              stderr=None if required else subprocess.DEVNULL).returncode
     except OSError as error:
+        if not required:
+            return None
         sys.exit('cannot run make to build %s: %s' % (exe, error))
     if code or not os.path.exists(exe):
+        if not required:
+            return None
         sys.exit('--net-profile needs the network runner %s, and building it needs libslirp.\n'
                  'Install it, then start again:  sudo apt install -y libslirp-dev libglib2.0-dev pkg-config' % exe)
     return exe
@@ -667,18 +754,22 @@ def main():
                     help='1 = real time (default), 0 = as fast as possible (offline only)')
     ap.add_argument('--workdir', default=os.path.join(os.path.expanduser('~'), '.cache', 'esp8266-emulator'))
     net = ap.add_argument_group('experimental virtual network (Arduino core 3.1.2/lwIP2, needs libslirp)')
+    net.add_argument('--offline', action='store_true', help='never use the virtual network')
+    net.add_argument('--internet', action='store_true',
+                     help='let networked images reach the internet (default: local only, every name leads to this host)')
     net.add_argument('--net-profile', metavar='FILE',
-                     help='run images this profile binds (scripts/network_profile.py) on build/esp8266emu-net')
+                     help='run only the images this profile binds (scripts/network_profile.py) on the network')
     net.add_argument('--net-forward', metavar='HOST:GUEST', type=net_forward, action='append', default=[],
                      help='forward 127.0.0.1:HOST to guest port GUEST (repeatable)')
     net.add_argument('--net-host', metavar='NAME=IP', type=net_host, action='append', default=[],
                      help='answer the guest\'s DNS query for NAME with IP, e.g. 10.0.2.2 for this host (repeatable)')
     net.add_argument('--net-capture', metavar='FILE', help='write guest Ethernet frames to a PCAP file')
     a = ap.parse_args()
-    if a.net_profile:
+    if a.offline:
+        if a.net_profile or a.internet or a.net_forward or a.net_host or a.net_capture:
+            ap.error('--offline cannot be combined with --internet or the --net- options')
+    else:
         check_net_options(ap, a)
-    elif a.net_forward or a.net_host or a.net_capture:
-        ap.error('--net-forward, --net-host and --net-capture need --net-profile')
     if a.profile_file:
         try:
             profile = load_profile(a.profile_file)
@@ -692,13 +783,20 @@ def main():
     exe = os.path.join(CHIP, 'build', 'esp8266emu')
     if not os.path.exists(exe):
         sys.exit('build the emulator first: make -C %s' % CHIP)
-    netcfg = None
+    netcfg, offline = None, OFFLINE
     if a.net_profile:
         netcfg = {'exe': build_net_runner(), 'profile': a.net_profile, 'forwards': a.net_forward,
-                  'hosts': a.net_host, 'capture': a.net_capture}
+                  'hosts': a.net_host, 'capture': a.net_capture, 'local': not a.internet}
+    elif not a.offline:
+        net_exe = build_net_runner(required=False)
+        if net_exe:
+            netcfg = {'exe': net_exe, 'profile': None, 'forwards': a.net_forward, 'hosts': a.net_host,
+                      'capture': a.net_capture, 'local': not a.internet, 'gui_port': a.port}
+        else:
+            offline = NO_RUNNER
     os.makedirs(a.workdir, exist_ok=True)
     hub = Hub()
-    emu = Emulator(hub, a.workdir, exe, a.speed, netcfg)
+    emu = Emulator(hub, a.workdir, exe, a.speed, netcfg, offline)
     httpd = Server(('127.0.0.1', a.port), make_handler(hub, emu, a.port, a.workdir))
 
     def bye(*_):
@@ -721,10 +819,16 @@ def main():
         emu.start({'sha': sha, 'name': os.path.basename(a.bin), 'size': len(body), 'flash_size': fsize,
                    'profile': DEFAULT_PROFILE, 'elf': elf})
     print('ESP8266 emulator GUI: http://127.0.0.1:%d/  (loopback only; Ctrl+C to stop)' % a.port, flush=True)
-    if netcfg:
+    if netcfg and netcfg['profile']:
         print('virtual network: images bound by %s run on %s%s' % (
             netcfg['profile'], netcfg['exe'], ''.join('; http://127.0.0.1:%d/ -> guest port %d' % f for f in netcfg['forwards'])),
             flush=True)
+    elif netcfg:
+        print('virtual network: on for a .bin dropped with its .elf (Arduino core %s/lwIP2); %s' % (
+            CORE_VERSION, 'internet allowed' if a.internet else 'local only: every name leads to this PC'), flush=True)
+    elif not a.offline:
+        print('virtual network: off, libslirp is missing. To turn it on: '
+              'sudo apt install -y libslirp-dev libglib2.0-dev pkg-config', flush=True)
     httpd.serve_forever()
 
 

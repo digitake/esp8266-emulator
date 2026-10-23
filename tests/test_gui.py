@@ -477,6 +477,103 @@ class GuiTests(unittest.TestCase):
         self.assertEqual(self.station(), 'halted')
         self.assertEqual(self.hub.snap['fw']['network']['IP'], '10.0.2.15')
 
+    def auto_emulator(self, local=True, forwards=()):
+        """Network on for any upload that passes the profile checks (the default without --net-profile)."""
+        exe = self.work / 'fake-emulator-net'
+        exe.write_text(FAKE_NET)
+        exe.chmod(0o700)
+        net = {'exe': str(exe), 'profile': None, 'forwards': list(forwards), 'hosts': [], 'capture': None,
+               'local': local, 'gui_port': 8276}
+        self.emu = server.Emulator(self.hub, str(self.work), self.emu.exe, 1, net)
+        return net
+
+    def upload(self, sha, elf=True):
+        """An uploaded image as /api/image stores it: BIN, ELF and metadata in the work directory."""
+        image = dict(self.image, sha=sha, name=sha[:4] + '.bin', elf=None)
+        binp, _, metap = map(Path, self.emu.paths(sha))
+        binp.write_bytes(b'firmware ' + sha.encode())
+        if elf:
+            image['elf'] = str(self.work / 'images' / (sha[:8] + '.elf'))
+            Path(image['elf']).write_bytes(b'\x7fELF ' + sha.encode())
+        metap.write_text(json.dumps(image))
+        return image
+
+    @staticmethod
+    def fake_profile(images, core):
+        return server.NET_PROFILE_HEADER + '\n' + ''.join(
+            'image %s\nsha256 %s\nend\n' % (b, Path(b).stem) for b, _ in images)
+
+    def test_uploaded_image_with_elf_runs_on_the_local_network(self):
+        self.auto_emulator()
+        image = self.upload('c' * 64)
+        with patch.object(server, 'check_image', return_value={}) as check, \
+             patch.object(server, 'build_profile', side_effect=self.fake_profile):
+            self.emu.start(image)
+            self.assertTrue(self.wait_for(lambda: self.station() == 'connected'))
+        args = self.emu.proc.args
+        self.assertEqual(args[0], self.emu.net['exe'])
+        profile = args[args.index('--net-profile') + 1]
+        self.assertEqual(profile, str(self.work / 'network-profile.txt'))
+        self.assertEqual(server.net_profile_digests(profile), {'c' * 64})
+        self.assertIn('--net-local', args)
+        port = int(args[args.index('--net-forward') + 1].split(':')[0])
+        self.assertNotEqual(port, 8276)
+        self.assertEqual(args[args.index('--net-forward') + 1], '%d:80' % port)
+        network = self.hub.snap['fw']['network']
+        self.assertEqual(network['guest :80'], 'http://127.0.0.1:%d/' % port)
+        self.assertTrue(network['internet'].startswith('off'))
+        self.assertEqual(check.call_count, 1)
+        self.emu.start(image)                         # the check is cached per BIN and ELF
+        self.assertEqual(check.call_count, 1)
+
+    def test_profile_includes_other_uploads_for_ota_between_them(self):
+        self.auto_emulator(local=False, forwards=[(9090, 80)])
+        old, other, no_elf, broken = (self.upload('d' * 64), self.upload('e' * 64), self.upload('f' * 64, elf=False),
+                                      self.upload('9' * 64))
+        def check(image, elf, label):
+            if label == broken['name']:
+                raise ValueError('ELF missing required network symbol')
+            return {}
+        with patch.object(server, 'check_image', side_effect=check), \
+             patch.object(server, 'build_profile', side_effect=self.fake_profile):
+            self.emu.start(old)
+            self.assertTrue(self.wait_for(lambda: self.station() == 'connected'))
+        args = self.emu.proc.args
+        self.assertEqual(server.net_profile_digests(args[args.index('--net-profile') + 1]), {'d' * 64, 'e' * 64})
+        self.assertNotIn('--net-local', args)
+        self.assertEqual(args[args.index('--net-forward') + 1], '9090:80')
+        self.assertNotIn('internet', self.hub.snap['fw']['network'])
+
+    def test_upload_without_elf_or_network_symbols_runs_offline_with_why(self):
+        self.auto_emulator()
+        cases = [(self.upload('a1' * 32, elf=False), None, server.NEED_ELF),
+                 (self.upload('b2' * 32), ValueError('ELF missing required network symbol esp2glue_netif_update'),
+                  'offline: not an Arduino core 3.1.2/lwIP2 network image (ELF missing required network symbol')]
+        for image, error, expected in cases:
+            with self.subTest(expected=expected), patch.object(server, 'check_image', side_effect=error):
+                self.ready.clear()
+                self.emu.start(image)
+                self.assertTrue(self.ready.wait(2))
+                self.assertEqual(self.emu.proc.args[0], self.emu.exe)
+                self.assertFalse([a for a in self.emu.proc.args if a.startswith('--net')])
+                self.assertTrue(self.hub.snap['fw']['network'].startswith(expected), self.hub.snap['fw']['network'])
+
+    def test_missing_network_runner_shows_how_to_install_it(self):
+        self.emu = server.Emulator(self.hub, str(self.work), self.emu.exe, 1, None, server.NO_RUNNER)
+        self.emu.start(self.image)
+        self.assertTrue(self.ready.wait(2))
+        self.assertEqual(self.hub.snap['fw']['network'], server.NO_RUNNER)
+        self.assertIn('libslirp-dev', server.NO_RUNNER)
+
+    def test_free_port_skips_ports_in_use(self):
+        import socket
+        with socket.socket() as s:
+            s.bind(('127.0.0.1', 0))
+            s.listen()
+            busy = s.getsockname()[1]
+            self.assertNotEqual(server.free_port(busy), busy)
+            self.assertNotEqual(server.free_port(busy + 1, {busy + 1}), busy + 1)
+
     def test_network_profile_digests(self):
         path = self.work / 'profile.txt'
         header = server.NET_PROFILE_HEADER + '\n'
@@ -507,7 +604,8 @@ class GuiTests(unittest.TestCase):
         profile.write_text(server.NET_PROFILE_HEADER + '\nimage /a.bin\nsha256 ' + 'a' * 64 + '\nend\n')
         bad = self.work / 'old-profile.txt'
         bad.write_text('esp8266-net-v1\n')
-        cases = [(['--net-forward', '8080:80'], 'need --net-profile'),
+        cases = [(['--offline', '--net-forward', '8080:80'], 'cannot be combined'),
+                 (['--offline', '--internet'], 'cannot be combined'),
                  (['--net-profile', str(profile), '--speed', '0'], 'positive --speed'),
                  (['--net-profile', str(bad)], 'not a version 2 network profile'),
                  (['--net-profile', str(profile), '--net-forward', '8277:80'], 'other than the GUI port'),

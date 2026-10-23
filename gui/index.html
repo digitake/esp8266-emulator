@@ -228,8 +228,9 @@ main { display: grid; grid-template-columns: minmax(360px, 440px) 1fr; gap: 12px
       </span></h2>
       <div class="board">
         <div class="empty" id="empty">
-          <b>Drop firmware.bin here</b>
-          <p>A complete ESP8266 flash image for address 0x0, with its ELF for setup() / loop() counts.</p>
+          <b>Drop firmware.bin + firmware.elf here</b>
+          <p>The .bin for flash address 0x0 boots right away. Its .elf adds setup() / loop() tracking and, for an
+            Arduino 3.1.2 image, a local Wi-Fi network.</p>
           <p><button id="pick" class="small">Choose files…</button></p>
         </div>
         <div id="device"></div>
@@ -284,7 +285,7 @@ main { display: grid; grid-template-columns: minmax(360px, 440px) 1fr; gap: 12px
   </section>
 </main>
 
-<div id="drop"><div><b>Drop to flash and boot</b>firmware.bin (+ optional firmware.elf)</div></div>
+<div id="drop"><div><b>Drop to flash and boot</b>firmware.bin, with firmware.elf for setup() / loop() and the network</div></div>
 <input type="file" id="file" multiple accept=".bin,.elf" hidden>
 <div class="toast" id="toast"></div>
 <div id="tip"></div>

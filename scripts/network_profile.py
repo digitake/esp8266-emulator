@@ -114,16 +114,25 @@ def parse_e9(data, offset, label):
     return segments
 
 
+def _crc_table():
+    table = []
+    for i in range(256):
+        crc = i << 24
+        for _ in range(8):
+            crc = ((crc << 1) ^ 0x04c11db7 if crc & 0x80000000 else crc << 1) & 0xffffffff
+        table.append(crc)
+    return table
+
+
+CRC_TABLE = _crc_table()
+
+
 def crc8266(data):
+    """MSB-first CRC-32, initial value 0xffffffff, no final XOR: what eboot checks. One table step per byte,
+    so the GUI can check a dropped image without a noticeable wait."""
     crc = 0xffffffff
     for byte in data:
-        for bitmask in (0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x01):
-            bit = bool(crc & 0x80000000)
-            if byte & bitmask:
-                bit = not bit
-            crc = (crc << 1) & 0xffffffff
-            if bit:
-                crc ^= 0x04c11db7
+        crc = ((crc << 8) & 0xffffffff) ^ CRC_TABLE[(crc >> 24) ^ byte]
     return crc
 
 
