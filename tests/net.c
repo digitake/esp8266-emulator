@@ -93,10 +93,40 @@ static void mode_lifecycle(void) {
 static void write_bytes(const char *path,const void *bytes,size_t size) {
  FILE *f=fopen(path,"wb");assert(f);assert(fwrite(bytes,1,size,f)==size);assert(!fclose(f));
 }
+// Independent hashlib SHA256 answers for E9, tag, mode, then zero padding.
+static const struct {unsigned size,tag,mode;const char *sha;} digest_vectors[] = {
+ {16,1,0,"2d786cf767facdac91eaf88630d034b6bfe94361c0d8774e13f0f4be8ce122d3"},
+ {16,2,0,"944301bb6d6da880941cad56169b6eae953f2ec27d0b0e623426ecb037639136"},
+ {16,2,3,"e6b821dc9c1352d8e3becf8a0f29fef7ba5ac4b1bad0e8b11780e6bad02726b4"},
+ {16,2,4,"8fd61b16549aedb90b8650bd63ed7152debe841a8388c1a0572ec2b92a191807"},
+ {32,2,3,"9f507a34a71f8d38d4441f2d81c406f1c1122771da9434b7dbb2fadaf533bb7e"},
+ {55,1,0,"c311189170df9d1e3a1f652242332bbc5367cbf9aa4ce1bdf69c3e52f3a0740f"},
+ {56,1,0,"420809096bfafdc527f0f88eae91b985339e35b48f45c0de06c98094f4f4c3a3"},
+ {63,1,0,"a344c28c241307f17fb7655e129d905775e518176dab2f709d4b7e730c9b8e9c"},
+ {64,1,0,"eaf2377af1cd2f4cb494e54c8a7c55f791132579ecee78f4979b9a84bce84a7e"},
+ {65,1,0,"3c04a32a2d20a3c27463c334131513cebdcad95d44c799e5cf91b006eb8f3d18"},
+ {119,1,0,"1a849d1edcb53d507f742913cf7ff2561da0347029b01aff2d8e21c47a6f2464"},
+ {120,1,0,"72a1693392ed91e067814967061740efffacf28ab2ec3692f0a822301d8dde14"},
+ {127,1,0,"4864b72c52838531391fdb818cc3947eb659d836a65643d842b598c871585e08"},
+ {128,1,0,"811c80877bfb0f30cc8b3246f2e54ce3d1a1b55cce869d8c4226eea2649a503e"},
+ {129,1,0,"175e6ed6ec8d2d6e079f45495a5a3d003b1eaa5bbb9a0f084a847cdd15c1bd49"},
+ {8192,1,0,"43fee11ca778a8f0d97dc89addd051c454b718419f48d708f71be3d4cbed1171"}
+};
+static const char *fixture_digest(const char *path) {
+ FILE *f=fopen(path,"rb");assert(f);uint8_t data[8192];size_t size=fread(data,1,sizeof data,f);assert(!ferror(f));fclose(f);
+ assert(size>=3 && data[0]==0xe9);for(unsigned i=3;i<size;i++)assert(!data[i]);
+ for(unsigned i=0;i<sizeof digest_vectors/sizeof *digest_vectors;i++)
+  if(size==digest_vectors[i].size && data[1]==digest_vectors[i].tag && data[2]==digest_vectors[i].mode)return digest_vectors[i].sha;
+ assert(!"missing independent SHA256 test vector");return NULL;
+}
 static void image_section(FILE *f,const char *path,uint32_t offset,bool all) {
- fprintf(f,"image %s\n",path);
+ fprintf(f,"image %s\nsha256 %s\n",path,fixture_digest(path));
  for(unsigned i=0;i<(all?S_COUNT:1);i++)fprintf(f,"symbol %s 0x%x\n",names[i],symbols[i]+offset);
  fputs("end\n",f);
+}
+static void two_image_profile(const char *profile,const char *a,const char *b) {
+ FILE *f=fopen(profile,"w");assert(f);fputs("esp8266-net-v2 arduino-3.1.2-lwip2\n",f);
+ image_section(f,a,0,true);image_section(f,b,0x10000,true);assert(!fclose(f));
 }
 static void profile_rejected(void) {
  expect_halt=true;
@@ -104,12 +134,51 @@ static void profile_rejected(void) {
  expect_halt=false;
  assert(!net_is_enabled() && !net_profile_match().active);
 }
+static void digest_profile(const char *profile,const char *image,const char *lines) {
+ FILE *f=fopen(profile,"w");assert(f);
+ fprintf(f,"esp8266-net-v2 arduino-3.1.2-lwip2\nimage %s\n%s",image,lines);
+ for(unsigned i=0;i<S_COUNT;i++)fprintf(f,"symbol %s 0x%x\n",names[i],symbols[i]);
+ fputs("end\n",f);assert(!fclose(f));
+}
+static void profile_digest_checks(void) {
+ char dir[]="/tmp/esp-net-digest-XXXXXX";assert(mkdtemp(dir));
+ char image[256],profile[256],error[256],line[160];
+ snprintf(image,sizeof image,"%s/image.bin",dir);snprintf(profile,sizeof profile,"%s/profile",dir);
+ // Exercise both padding branches, exact blocks and a multi-kilobyte BIN.
+ for(unsigned i=0;i<sizeof digest_vectors/sizeof *digest_vectors;i++) {
+  if(digest_vectors[i].mode>3)continue;
+  uint8_t data[8192]={0xe9};data[1]=digest_vectors[i].tag;data[2]=digest_vectors[i].mode;
+  write_bytes(image,data,digest_vectors[i].size);
+  snprintf(line,sizeof line,"sha256 %s\n",digest_vectors[i].sha);
+  digest_profile(profile,image,line);assert(net_profile_load(profile,error,sizeof error));net_profile_close();
+ }
+ uint8_t data[16]={0xe9,1};write_bytes(image,data,sizeof data);
+ const char *sha=digest_vectors[0].sha;
+ snprintf(line,sizeof line,"sha256 %s\n",sha);digest_profile(profile,image,line);
+ // Rebuilding or replacing the BIN after generating a profile fails closed,
+ // including a source mode-only change that runtime matching would permit.
+ data[8]=1;write_bytes(image,data,sizeof data);
+ assert(!net_profile_load(profile,error,sizeof error) && strstr(error,"SHA256 mismatch"));
+ data[8]=0;data[2]=3;write_bytes(image,data,sizeof data);
+ assert(!net_profile_load(profile,error,sizeof error) && strstr(error,"SHA256 mismatch"));
+ data[2]=0;write_bytes(image,data,sizeof data);
+ digest_profile(profile,image,"");assert(!net_profile_load(profile,error,sizeof error) && strstr(error,"missing image sha256"));
+ digest_profile(profile,image,"sha256 1234\n");assert(!net_profile_load(profile,error,sizeof error) && strstr(error,"sha256"));
+ memset(line,'g',64);line[64]=0;char malformed[80];snprintf(malformed,sizeof malformed,"sha256 %.64s\n",line);
+ digest_profile(profile,image,malformed);assert(!net_profile_load(profile,error,sizeof error) && strstr(error,"sha256"));
+ snprintf(line,sizeof line,"sha256 %s\nsha256 %s\n",sha,sha);
+ digest_profile(profile,image,line);assert(!net_profile_load(profile,error,sizeof error) && strstr(error,"duplicate"));
+ FILE *f=fopen(profile,"w");assert(f);fputs("esp8266-net-v1 arduino-3.1.2-lwip2\n",f);assert(!fclose(f));
+ assert(!net_profile_load(profile,error,sizeof error) && strstr(error,"regenerate"));
+ assert(!net_profile_requested() && !net_is_enabled());
+ net_profile_close();assert(!unlink(image));assert(!unlink(profile));assert(!rmdir(dir));
+}
 static void profile_lifecycle(void) {
  char dir[]="/tmp/esp-net-profile-XXXXXX";assert(mkdtemp(dir));
  char a[256],b[256],profile[256];snprintf(a,sizeof a,"%s/old image.bin",dir);snprintf(b,sizeof b,"%s/new image.bin",dir);snprintf(profile,sizeof profile,"%s/network.txt",dir);
  uint8_t old[16]={0xe9,1},next[16]={0xe9,2},flash[4096];
  write_bytes(a,old,sizeof old);write_bytes(b,next,sizeof next);
- FILE *f=fopen(profile,"w");assert(f);fputs("esp8266-net-v1 arduino-3.1.2-lwip2\n# provenance is documentary\n\n",f);image_section(f,a,0,true);image_section(f,b,0x10000,true);assert(!fclose(f));
+ FILE *f=fopen(profile,"w");assert(f);fputs("esp8266-net-v2 arduino-3.1.2-lwip2\n# provenance is documentary\n\n",f);image_section(f,a,0,true);image_section(f,b,0x10000,true);assert(!fclose(f));
  char error[256];assert(net_profile_load(profile,error,sizeof error));assert(net_profile_requested());
  // The application must match the bytes cached at load, not a changed disk file.
  write_bytes(a,next,sizeof next);
@@ -152,20 +221,23 @@ static void profile_lifecycle(void) {
  assert(!net_is_enabled());net_profile_close();assert(!net_profile_requested());
  // Duplicate image bytes cannot silently pick the first ELF/symbol profile.
  write_bytes(a,next,sizeof next);
- f=fopen(profile,"w");assert(f);fputs("esp8266-net-v1 arduino-3.1.2-lwip2\n",f);image_section(f,a,0,true);image_section(f,b,0x10000,true);assert(!fclose(f));
+ f=fopen(profile,"w");assert(f);fputs("esp8266-net-v2 arduino-3.1.2-lwip2\n",f);image_section(f,a,0,true);image_section(f,b,0x10000,true);assert(!fclose(f));
  assert(!net_profile_load(profile,error,sizeof error));assert(strstr(error,"ambiguous"));
  // Even an exact match is unsafe if another ELF profile differs only in mode.
  next[2]=3;write_bytes(b,next,sizeof next);
+ two_image_profile(profile,a,b);
  assert(!net_profile_load(profile,error,sizeof error));assert(strstr(error,"ambiguous"));
  // Reject ambiguous prefixes with different BIN lengths too.
  uint8_t longer[32]={0};memcpy(longer,next,sizeof next);write_bytes(b,longer,sizeof longer);
+ two_image_profile(profile,a,b);
  assert(!net_profile_load(profile,error,sizeof error));assert(strstr(error,"ambiguous"));
  next[2]=4;write_bytes(b,next,sizeof next);
+ two_image_profile(profile,a,b);
  assert(!net_profile_load(profile,error,sizeof error));assert(strstr(error,"flash mode"));
  // Missing required symbols fail before booting.
- f=fopen(profile,"w");assert(f);fputs("esp8266-net-v1 arduino-3.1.2-lwip2\n",f);image_section(f,a,0,false);assert(!fclose(f));
+ f=fopen(profile,"w");assert(f);fputs("esp8266-net-v2 arduino-3.1.2-lwip2\n",f);image_section(f,a,0,false);assert(!fclose(f));
  assert(!net_profile_load(profile,error,sizeof error));assert(strstr(error,"missing"));
- f=fopen(profile,"w");assert(f);fprintf(f,"esp8266-net-v1 arduino-3.1.2-lwip2\nimage %s\nsymbol %s 0x40200000\nsymbol %s 0x40200000\nend\n",a,names[0],names[1]);assert(!fclose(f));
+ f=fopen(profile,"w");assert(f);fprintf(f,"esp8266-net-v2 arduino-3.1.2-lwip2\nimage %s\nsymbol %s 0x40200000\nsymbol %s 0x40200000\nend\n",a,names[0],names[1]);assert(!fclose(f));
  assert(!net_profile_load(profile,error,sizeof error));assert(strstr(error,"duplicate"));
  assert(!net_profile_requested() && !net_is_enabled());
  net_profile_close();E.flash=NULL;E.flash_size=0;
@@ -191,9 +263,16 @@ int main(void) {
  hle_wr32(DRAM_BASE+400,0);hle_wr32(DRAM_BASE+404,0);hle_wr32(DRAM_BASE+408,0);
  hook(S_IP_SET,0,DRAM_BASE+400,0,0);hook(S_UPDATE,0,0,0,0);net_service_guest();
  assert(updates==1 && net_get_stats().ip==0x0f02000a);
+ // Stopping DHCP alone preserves the assigned address and existing link. It
+ // must not manufacture a reconfiguration/GOT_IP or discard active sockets.
+ net_stats_t lease=net_get_stats();unsigned stopped=dhcp_stops,reset_count=backend_resets;
+ unsigned down_count=link_downs,update_count=updates,event_count=events_seen;
+ hook(S_DHCPC_STOP,0,0,0,0);net_service_guest();net_stats_t kept=net_get_stats();
+ assert(!hook(S_DHCPC_STATUS,0,0,0,0));assert(kept.connected && kept.ip==lease.ip && kept.mask==lease.mask && kept.gateway==lease.gateway);
+ assert(dhcp_stops==stopped+1 && backend_resets==reset_count && link_downs==down_count && updates==update_count && events_seen==event_count);
  // Public static configuration is still applied after DHCP is stopped.
  hle_wr32(DRAM_BASE+400,0x2a02000a);hle_wr32(DRAM_BASE+404,0x00ffffff);hle_wr32(DRAM_BASE+408,0x0202000a);
- hook(S_DHCPC_STOP,0,0,0,0);hook(S_IP_SET,0,DRAM_BASE+400,0,0);net_service_guest();
+ hook(S_IP_SET,0,DRAM_BASE+400,0,0);net_service_guest();
  assert(updates==2 && net_get_stats().ip==0x2a02000a);
  hook(S_DHCPC_START,0,0,0,0);net_service_guest();assert(updates==3);
  uint8_t frame[60];memset(frame,0xAA,sizeof frame);hle_write(DRAM_BASE+2048,frame,60);
@@ -210,6 +289,6 @@ int main(void) {
  assert(!net_receive(1,frame,60));net_service_guest();assert(inputs==1 && net_get_stats().rx_pending==0);
  hook(S_CONNECT,0,0,0,0);net_service_guest();assert(net_get_stats().connected);
  assert(hook(S_TX,0,DRAM_BASE+512,DRAM_BASE+2048,60)==0);assert(net_receive(1,frame,60));net_reset(2);net_service_guest();assert(frees==NET_QUEUE_MAX && inputs==1);assert(!net_receive(1,frame,60));
- mode_lifecycle();profile_lifecycle();
+ mode_lifecycle();profile_lifecycle();profile_digest_checks();
  puts("net adapter ownership/scheduler/reset tests passed");
 }

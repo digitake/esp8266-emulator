@@ -6,7 +6,7 @@ import struct
 import sys
 
 CORE_VERSION = '3.1.2'
-HEADER = 'esp8266-net-v1 arduino-3.1.2-lwip2'
+HEADER = 'esp8266-net-v2 arduino-3.1.2-lwip2'
 FLASHMAP_BASE = 0x40200000
 FLASHMAP_END = 0x40300000
 IRAM_BASE = 0x40100000
@@ -216,7 +216,8 @@ def build_profile(images, core_version):
         symbols = check_image(image, elf, str(bpath))
         output.extend(['# bin-sha256 %s %s' % (hashlib.sha256(image).hexdigest(), bpath),
                        '# elf-sha256 %s %s' % (hashlib.sha256(elf).hexdigest(), epath),
-                       'image ' + str(bpath)])
+                       'image ' + str(bpath),
+                       'sha256 ' + hashlib.sha256(image).hexdigest()])
         for name in SYMBOLS:
             if name in symbols:
                 output.append('symbol %s 0x%x' % (name, symbols[name]))

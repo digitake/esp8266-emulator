@@ -1,5 +1,6 @@
 """Synthetic ELF/BIN fixtures for the fleet network-profile generator."""
 import struct
+import hashlib
 import tempfile
 from pathlib import Path
 import sys
@@ -105,6 +106,7 @@ class NetworkProfileTests(unittest.TestCase):
             self.assertIn('# bin-sha256 ', profile)
             self.assertIn('# elf-sha256 ', profile)
             self.assertIn('image ' + str(bin_path.resolve()) + '\n', profile)
+            self.assertIn('\nsha256 ' + hashlib.sha256(image).hexdigest() + '\n', profile)
             self.assertIn('symbol wifi_get_ip_info ', profile)
             self.assertEqual(profile.count('\nend\n'), 1)
             self.assertEqual(bin_path.read_bytes(), image)
