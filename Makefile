@@ -34,7 +34,7 @@ build/test-predecode: tests/predecode.c $(SRC) src/emu.h build/test-host.o
 build/test-watchdog: tests/watchdog.c $(SRC) src/emu.h build/test-host.o
 	$(CC) $(TEST_CFLAGS) -Isrc -o $@ tests/watchdog.c src/cpu.c src/soc.c src/rom.c src/crypto.c build/test-host.o -lm
 
-test: build/test-peripherals build/test-core build/test-scheduler build/test-mac build/test-predecode build/test-watchdog
+test: $(OUT) build/test-peripherals build/test-core build/test-scheduler build/test-mac build/test-predecode build/test-watchdog
 	ASAN_OPTIONS=detect_leaks=0 build/test-peripherals
 	ASAN_OPTIONS=detect_leaks=0 build/test-core
 	ASAN_OPTIONS=detect_leaks=0 build/test-scheduler
@@ -44,6 +44,7 @@ test: build/test-peripherals build/test-core build/test-scheduler build/test-mac
 	python3 -I scripts/mask.py
 	python3 -I tests/test_gui.py
 	python3 -I tests/test_tools.py
+	python3 -I tests/test_runner.py
 
 check: $(OUT) test
 	python3 -I scripts/watchdog_check.py --out build/watchdog-check.json
