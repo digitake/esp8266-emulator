@@ -1096,6 +1096,7 @@ criteria.
 | `--net-profile needs the network runner …, and building it needs libslirp` | The GUI was started with `--net-profile`, but libslirp is missing. Install it: `sudo apt install -y libslirp-dev libglib2.0-dev pkg-config`. |
 | Network card: `offline: this image (sha256 …) is not in the network profile` | The profile binds exact builds. Regenerate it with `scripts/network_profile.py` for this BIN and its ELF, then load the image again. |
 | `live networking needs a positive speed: the network runner refuses 0 (max)` | The image runs on the virtual network; choose `1×` or `¼×`. |
+| `HALT: cannot forward host port N`; virtual station shows `halted` | Another program already listens on 127.0.0.1:N. Choose a free host port for `--net-forward`. |
 | `pio: command not found` | PlatformIO is not installed on this side. Install [PlatformIO Core](https://docs.platformio.org/en/latest/core/installation/index.html), or build on Windows and run `run-gui.ps1` ([section 2](#your-first-run-with-the-example)). |
 | `flash: image is N bytes; flash capacity is M bytes` | The file is larger than the flash size in its header or the selected `--chip`. Use the image for address 0x0, or a larger `--flash-size`. |
 | `unknown chip profile: …` | Use one of `esp8266`, `esp12e`, `esp12f`, `esp8285`, `esp8285h16`. |
