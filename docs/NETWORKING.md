@@ -25,6 +25,15 @@ executable bytes and Arduino CRC fields before using its symbols. The runner
 matches the actual application bytes after eboot and binds that image's hooks.
 An unknown update image stops execution instead of reusing old addresses.
 Persistent configuration beyond the BIN is excluded from image matching.
+Profiles use version 2 and verify the source BIN's SHA256 before binding its
+symbols. Rebuild a BIN after generating a profile and the runner refuses it;
+regenerate the profile with its matching ELF. Old version 1 profiles must also
+be regenerated.
+
+Arduino's raw Updater may preserve the running flash mode by changing header
+byte 2. The adapter permits only that one byte to differ, with a valid mode
+0–3; every other byte must match. It reports this normalization and rejects
+ambiguous profiles. This does not model the electrical behavior of SPI modes.
 
 Live networking requires positive speed; start with `--speed 1`. The backend
 uses host time while CPU and peripheral timers use guest time. Live network
@@ -41,25 +50,28 @@ service. The guest still sends a real DNS request to `10.0.2.3`; the backend
 answers matching IPv4 A queries. Other names use the normal DNS backend.
 Repeat the option for up to 16 names. Overrides remain in place across resets.
 
-The adapter currently models one station interface. SoftAP recovery, RF/WPA
-behavior, sleep transitions and arbitrary SDK versions are not established.
+The adapter currently models one station interface. Real guest DHCP, DNS, MQTT,
+HTTP update and station web upload have passed with the bundled reference.
+WiFi OFF/STA transitions and DHCP reacquisition are checked on both OTA boots.
+SoftAP recovery, RF/WPA behavior, sleep transitions and arbitrary SDK versions
+are not established.
 Blocking network operations inside injected Wi-Fi event callbacks are not
-supported; normal application-loop MQTT processing is the first target.
+supported; the live reference processes MQTT in the application loop.
 
 For firmware built with Arduino core 3.1.2 and lwIP2, the implemented boundary is
-the glue between lwIP and the closed SDK. Hook Ethernet output before
+the glue between lwIP and the closed SDK. The adapter hooks Ethernet output before
 `eagle_lwip_if` / `ieee80211_output_pbuf`, and inject receive frames through the
-paired glue entry points. The real guest stack, sockets and application would
+paired glue entry points. The real guest stack, sockets and application
 continue executing from the unmodified image.
 
-## Candidate interface
+## Guest interface
 
 The core declares the boundary in `tools/sdk/lwip2/include/glue.h`; its
 implementations are in `builder/glue-lwip/lwip-git.c` and
 `builder/glue-esp/lwip-esp.c`. These are external core sources, not files bundled
 with this emulator.
 
-| Boundary | Prototype responsibility |
+| Boundary | Adapter responsibility |
 | --- | --- |
 | `glue2esp_linkoutput` | Validate and copy one Ethernet frame to a bounded host queue; return an error or success |
 | `esp2glue_pbuf_freed` | Release each accepted TX reference exactly once after host consumption |
@@ -104,7 +116,7 @@ acknowledgments/retries, real AP interoperability, roaming, radio sleep or measu
 RSSI. Keep scans empty or label synthetic scan fixtures explicitly. Host I/O adds
 asynchronous timing; retain deterministic offline tests separately.
 
-## Prototype acceptance
+## Firmware acceptance checks
 
 Compatibility must be demonstrated for each identified SDK/image. Backend and
 queue unit tests alone do not establish firmware compatibility. The required

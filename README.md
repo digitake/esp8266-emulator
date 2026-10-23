@@ -112,8 +112,11 @@ do not provide a radio.
 The default build is offline. An optional [virtual station](docs/NETWORKING.md)
 connects image-bound Arduino 3.1.2/lwIP2 firmware to a host NAT backend. This
 experimental adapter needs matching BIN/ELF profiles; compatibility with other
-SDKs, SoftAP and physical radio behavior is not established. The separate OTA
-rehearsal tool injects staged bytes and a boot command to test eboot copying.
+SDKs, SoftAP and physical radio behavior is not established. The bundled
+[network OTA test](docs/TESTING.md#mqtt-triggered-http-ota) exercises MQTT-triggered
+HTTP updates and station web uploads with raw or gzip images, saved settings,
+eboot and a new application boot. The separate offline rehearsal injects staged
+bytes and a boot command to test eboot copying.
 
 Timing assumes one cycle per instruction and instantaneous flash operations.
 This is a functional debugging tool, not a cycle-accurate or electrical board
@@ -123,7 +126,7 @@ model. Physical-board timing has not been validated.
 
 - [Current scope](docs/STATUS.md) and [architecture/event protocol](docs/ARCHITECTURE.md)
 - [Testing, regression fixtures and performance](docs/TESTING.md)
-- [Network feasibility](docs/NETWORKING.md) and [physical-board comparison](docs/BOARD-COMPARISON.md)
+- [Virtual networking](docs/NETWORKING.md) and [physical-board comparison](docs/BOARD-COMPARISON.md)
 - [Contributing](CONTRIBUTING.md) and [reference notices](NOTICE.md)
 
 Source lives in `src/`, the local interface in `gui/`, command-line tools in

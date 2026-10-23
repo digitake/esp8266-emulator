@@ -13,10 +13,12 @@ not establish compatibility with every firmware that uses it.
 | Boot and ROM | E9 image loading, guest callbacks, task scheduling, selected libc/libgcc and crypto services |
 | I/O | GPIO0–16, IO_MUX, edge/level GPIO interrupts, UART TX/RX and FRC timers |
 | Flash | NOR program/erase behavior, SPI0 operations, cache mapping and persistent image state |
+| Chip profiles | ESP8266, ESP-12E/F, ESP8285 1 MiB and ESP8285H16 2 MiB identity/capacity settings |
+| Virtual station | Optional libslirp NAT, guest lwIP DHCP/DNS/TCP, station events and OFF/STA reconnects for Arduino 3.1.2/lwIP2 |
 | Minimal MAC | No-ACK completion for queues 0–7 through IRQ0, virtual TSF and one MAC timer |
 | Watchdog | Register-controlled feed, gating, interrupt stages and reset cause 4 |
 | GUI | Generic GPIO view, user-defined pin profiles, masked UART, loopback request guards and serialized process lifecycle |
-| Tools | Masked execution reports, user-defined regression manifests and eboot OTA-copy rehearsal |
+| Tools | Masked reports, regression manifests, offline eboot rehearsal and live MQTT/HTTP or station web-upload OTA checks |
 
 The source models were developed around Arduino core 3.1.2 and NONOS SDK
 interfaces. Different SDK versions, bootloaders or firmware may exercise
@@ -35,13 +37,19 @@ images, matching ELFs, scenarios and reviewed JSON references in a regression
 manifest. The public repository has no bundled device firmware or product-specific
 golden records. See [testing](TESTING.md) for exact comparison and provenance rules.
 
+The public reference source can be built with a separately installed Arduino
+core 3.1.2/toolchain. Live tests run its own MQTT client, HTTP updater, EEPROM,
+eboot and replacement application through the network adapter. Both raw and gzip
+updates have passed with 4 MiB ESP-12F and 1 MiB ESP8285 profiles. These results
+establish those specific builds and paths; they are not a blanket SDK guarantee.
+
 ## Remaining limits
 
-There is no RF model, acknowledged unicast transmission, receive path or host
-network bridge. SDK AP state is not a Wi-Fi network that another device can
-discover. Station association, DHCP connectivity, MQTT and actual HTTP/Updater
-OTA remain unimplemented. The [network design](NETWORKING.md) describes a possible
-lwIP boundary prototype.
+There is no RF model or full 802.11 MAC. The optional [network adapter](NETWORKING.md)
+supplies a virtual station at the lwIP/SDK boundary and requires matching BIN/ELF
+profiles. It does not establish SoftAP recovery, WPA, scanning, roaming, radio
+sleep or compatibility with arbitrary SDK versions. SDK AP state is not a Wi-Fi
+network that another device can discover.
 
 ROM services are source implementations, not a ROM dump. Initial ROM watchdog
 setup and the complete undocumented watchdog mode API are incomplete. Memory

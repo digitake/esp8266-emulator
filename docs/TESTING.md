@@ -146,10 +146,10 @@ python3 -I scripts/build_reference.py --core /path/to/arduino-esp8266 \
   --toolchain /path/to/xtensa-lx106-elf --out /tmp/network-firmware --version B
 make network
 python3 -I scripts/network_check.py \
-  --running /tmp/network-firmware/A/reference.bin \
-  --running-elf /tmp/network-firmware/A/reference.elf \
-  --new /tmp/network-firmware/B/reference.bin \
-  --new-elf /tmp/network-firmware/B/reference.elf --out /tmp/network-raw
+  --running /tmp/network-firmware/A-4M-dio/reference.bin \
+  --running-elf /tmp/network-firmware/A-4M-dio/reference.elf \
+  --new /tmp/network-firmware/B-4M-dio/reference.bin \
+  --new-elf /tmp/network-firmware/B-4M-dio/reference.elf --out /tmp/network-raw
 ```
 
 Add `--gzip --out /tmp/network-gzip` for a compressed transfer. The runner uses
@@ -158,10 +158,25 @@ It supports only the messages used by the reference; it is not a general broker.
 The reference receives a real MQTT PUBLISH and downloads the image through its
 own HTTP/Updater code. No staged bytes or boot commands are injected.
 
+Use `--method web` for a real multipart upload to the guest's
+`ESP8266HTTPUpdateServer` through a loopback port forward. This path sends no MQTT
+OTA command and performs no HTTP pull. `--gzip` also works with web uploads.
+The reference serves uploads in station mode; this does not establish support
+for a product's SoftAP recovery flow.
+
+Build both images with `--flash-size 1M` and select their `A-1M-dio` and
+`B-1M-dio` paths with `--chip esp8285` in the runner to test the 1 MiB profile.
+The builder also accepts `2M`, and `--flash-mode dout` selects DOUT images.
+Use the same flash capacity as the firmware's linker map. A chip profile alone
+cannot change the addresses compiled into a BIN.
+
 A passing run requires exactly two boots, a second-boot application loop and
 version marker, version B on a new MQTT connection, correct flash bytes, no
 unexpected resets, and at least two seconds of B operation before exit. The
-output includes a JSON result, masked UART, event trace, final flash and PCAP.
+runner also checks a WiFi OFF/STA reconnect on each boot and an EEPROM marker
+reported by both images. The broker hostname resolves through the guest's DNS
+client using a local test override. The output includes a JSON result, masked
+UART, event trace, final flash and PCAP.
 Keep traces local. These tests establish compatibility with the reference
 build; a fleet image needs its own command contract and build-specific evidence.
 
