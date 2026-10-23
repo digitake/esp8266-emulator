@@ -75,6 +75,7 @@ test: $(OUT) build/test-peripherals build/test-core build/test-scheduler build/t
 	python3 -I tests/test_tools.py
 	python3 -I tests/test_chip_cli.py
 	python3 -I tests/test_network_profile.py
+	python3 -I tests/test_network_services.py
 
 check: $(OUT) test
 	python3 -I scripts/watchdog_check.py --out build/watchdog-check.json

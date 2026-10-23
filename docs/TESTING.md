@@ -133,6 +133,38 @@ The rehearsal does **not** exercise HTTP download, live Updater writes or
 application-specific OTA triggering. Firmware using a different bootloader or
 update protocol needs a different rehearsal.
 
+## MQTT-triggered HTTP OTA
+
+The reference source in `examples/network_reference/reference.cpp` uses the
+guest Wi-Fi client, MQTT messages and `ESPhttpUpdate`. Build A and B from a
+local Arduino ESP8266 core 3.1.2 and its Linux Xtensa GCC 10.3 toolchain:
+
+```sh
+python3 -I scripts/build_reference.py --core /path/to/arduino-esp8266 \
+  --toolchain /path/to/xtensa-lx106-elf --out /tmp/network-firmware --version A
+python3 -I scripts/build_reference.py --core /path/to/arduino-esp8266 \
+  --toolchain /path/to/xtensa-lx106-elf --out /tmp/network-firmware --version B
+make network
+python3 -I scripts/network_check.py \
+  --running /tmp/network-firmware/A/reference.bin \
+  --running-elf /tmp/network-firmware/A/reference.elf \
+  --new /tmp/network-firmware/B/reference.bin \
+  --new-elf /tmp/network-firmware/B/reference.elf --out /tmp/network-raw
+```
+
+Add `--gzip --out /tmp/network-gzip` for a compressed transfer. The runner uses
+a small loopback MQTT protocol fixture on port 1883 and a local HTTP server.
+It supports only the messages used by the reference; it is not a general broker.
+The reference receives a real MQTT PUBLISH and downloads the image through its
+own HTTP/Updater code. No staged bytes or boot commands are injected.
+
+A passing run requires exactly two boots, a second-boot application loop and
+version marker, version B on a new MQTT connection, correct flash bytes, no
+unexpected resets, and at least two seconds of B operation before exit. The
+output includes a JSON result, masked UART, event trace, final flash and PCAP.
+Keep traces local. These tests establish compatibility with the reference
+build; a fleet image needs its own command contract and build-specific evidence.
+
 ## Performance and bug reports
 
 Measure user CPU separately from wall time on a shared host. The following
