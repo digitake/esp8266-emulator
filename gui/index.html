@@ -374,7 +374,7 @@ function renderStat(e) {
 const lampSvg = '<svg class="lamp" viewBox="0 0 24 24"><path class="glass" d="M12 2a7 7 0 0 0-4 12.74V17a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-2.26A7 7 0 0 0 12 2z"/><path d="M9 20h6v1.2a.8.8 0 0 1-.8.8H9.8a.8.8 0 0 1-.8-.8z" fill="#8f949c"/></svg>';
 function renderDevice() {
   const P = S.profile, dev = $('device');
-  if (!P || !P.gangs.length) { dev.innerHTML = ''; return; }
+  if (!P || !P.gangs.length) { dev.innerHTML = ''; renderChip(); return; }     // roles on the pads follow the profile
   const gangs = P.gangs.map((g, i) => `
     <div class="gang" id="gang${i}">
       <div class="lampwrap" id="lamp${i}">${lampSvg}</div>
@@ -471,7 +471,7 @@ function buildChip() {
   <path d="M112 64V22h20v42h20V22h20v42h20V22h20v42h20V22h20v42h12" fill="none" stroke="#c9a35b" stroke-width="3" stroke-linejoin="round"/>
   <rect x="104" y="80" width="152" height="190" rx="5" fill="url(#can)" stroke="#3b4354"/>
   <text x="180" y="170" text-anchor="middle" font-size="13" font-weight="600" fill="#6b7488" font-family="system-ui, sans-serif">ESP-12F</text>
-  <text x="180" y="186" text-anchor="middle" font-size="9" fill="#4b5260" font-family="system-ui, sans-serif">ESP8266EX · 4 MB flash</text>`;
+  <text id="chipflash" x="180" y="186" text-anchor="middle" font-size="9" fill="#4b5260" font-family="system-ui, sans-serif">ESP8266EX</text>`;
   LEFT.forEach((p, i) => s += pad(p, 84, 86 + i * 24, 'L'));
   RIGHT.forEach((p, i) => s += pad(p, 276, 86 + i * 24, 'R'));
   BOTTOM.forEach((p, i) => s += pad(p, 120 + i * 24, 296, 'B'));
@@ -706,6 +706,7 @@ function onEvent(e) {
       S.image = e; $('imgname').textContent = e.name;
       $('imginfo').textContent = ` ${(e.size / 1024).toFixed(0)} KB · ${e.sha.slice(0, 8)} · flash ${e.flash_size / 1048576} MB${e.has_elf ? ' · +elf' : ''}${e.flash_persisted ? ' · saved flash' : ''}`;
       $('empty').style.display = 'none'; $('chipbox').classList.remove('nofw');
+      $('chipflash').textContent = `ESP8266EX · ${e.flash_size / 1048576} MB flash`;
       break;
     case 'profile': S.profile = e; $('profile').value = e.name; renderDevice(); break;
     case 'clear':      // a (re)started emulator process: everything below belongs to the previous one
@@ -733,6 +734,7 @@ function onEvent(e) {
     }
     case 'stat':
       if (e.ratio > 0) S.ratio = S.ratio * 0.5 + e.ratio * 0.5;     // measured by the emulator itself
+      else if (S.stat && e.t_us === S.stat.t_us) S.ratio = 0;        // halted or stopped: emulated time stands still
       S.stat = e; S.statWall = performance.now();
       renderStat(e); renderBoot(); break;
     case 'fw': S.fw = e; renderNet(); break;
