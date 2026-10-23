@@ -270,25 +270,28 @@ static void handle_command(char *line)
 
 static void poll_input(int timeout_ms)
 {
-    static char buf[8192];
+    static char buf[8192], line[8192];
     static int blen;
     struct pollfd pf = { .fd = 0, .events = POLLIN };
-    while (poll(&pf, 1, timeout_ms) > 0) {
+    for (;;) {
+        // Take each line out of buf before running it: reset/power/softreset/quit longjmp out of here, and the
+        // lines read along with them run on the next call.
+        char *nl;
+        while ((nl = memchr(buf, '\n', (size_t)blen))) {
+            int len = (int)(nl - buf);
+            memcpy(line, buf, (size_t)len);
+            line[len] = 0;
+            blen -= len + 1;
+            memmove(buf, nl + 1, (size_t)blen);
+            handle_command(line);
+        }
+        if (blen >= (int)sizeof buf - 1) blen = 0;
+        if (poll(&pf, 1, timeout_ms) <= 0) return;
         timeout_ms = 0;
         if (pf.revents & (POLLHUP | POLLERR) && !(pf.revents & POLLIN)) longjmp(E.reset_jmp, RJ_QUIT);
         ssize_t n = read(0, buf + blen, sizeof buf - 1 - (size_t)blen);
         if (n <= 0) longjmp(E.reset_jmp, RJ_QUIT);
         blen += (int)n;
-        buf[blen] = 0;
-        char *start = buf, *nl;
-        while ((nl = strchr(start, '\n'))) {
-            *nl = 0;
-            handle_command(start);
-            start = nl + 1;
-        }
-        blen = (int)strlen(start);
-        memmove(buf, start, (size_t)blen);
-        if (blen >= (int)sizeof buf - 1) blen = 0;
     }
 }
 

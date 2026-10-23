@@ -13,7 +13,8 @@ make check
 The C tests use AddressSanitizer and UndefinedBehaviorSanitizer. They cover
 instruction semantics, exceptions, predecode equivalence, scheduler priorities,
 peripherals, MAC completion and watchdog behavior. Python tests cover masking,
-GUI request handling, child-process lifecycle and command-line tools. These
+GUI request handling, child-process lifecycle, runner stdin commands across
+resets and command-line tools. These
 checks use synthetic inputs and need no SDK, firmware bundle or network service.
 
 LeakSanitizer is disabled for compatibility with ptrace environments; address

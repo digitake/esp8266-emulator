@@ -124,6 +124,8 @@ model. Physical-board timing has not been validated.
 
 ## Project guide
 
+- [User manual](docs/USER-MANUAL.md): installation, GUI, headless runs, scenarios,
+  debugging and troubleshooting
 - [Current scope](docs/STATUS.md) and [architecture/event protocol](docs/ARCHITECTURE.md)
 - [Testing, regression fixtures and performance](docs/TESTING.md)
 - [Virtual networking](docs/NETWORKING.md) and [physical-board comparison](docs/BOARD-COMPARISON.md)

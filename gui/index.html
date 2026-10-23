@@ -446,7 +446,11 @@ function onEvent(e) {
       break;
     case 'stages':
       S.stages = e.list; const last = e.list[e.list.length - 1];
-      if (last && last.s === 'rom') { S.halt = null; if (e.list.length > 1) conAppend(`\n──── boot ${last.boot}: ${REASON[last.reason] || 'reset'} ────\n`, 'sep'); }
+      if (last && last.s === 'rom') {
+        S.halt = null;
+        if (last.reason === 1) { S.driven = {}; renderPins(); }     // power-on releases every external drive
+        if (e.list.length > 1) conAppend(`\n──── boot ${last.boot}: ${REASON[last.reason] || 'reset'} ────\n`, 'sep');
+      }
       renderState(); break;
     case 'stat': {
       const now = performance.now();
