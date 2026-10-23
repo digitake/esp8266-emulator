@@ -24,9 +24,10 @@ Know its limits:
 
 - **ESP8266 only**, not ESP32. Developed around Arduino core 3.1.2 and the
   NONOS SDK. Other firmware may call ROM functions that are not implemented yet.
-- **No radio.** The GUI runs offline, so Wi-Fi scans find nothing. An
-  experimental [virtual network](docs/NETWORKING.md) for headless runs can connect
-  Arduino 3.1.2 firmware to your host.
+- **No radio.** Wi-Fi scans find nothing. Instead, an experimental
+  [virtual network](docs/NETWORKING.md) gives Arduino 3.1.2 firmware Wi-Fi that
+  reaches only your own computer, so you can test MQTT and OTA against local
+  services.
 - **Idealized timing.** It counts one instruction per cycle and treats flash
   writes as instant. It is a functional debugger, not a cycle-accurate or
   electrical model.
@@ -37,74 +38,60 @@ Know its limits:
 
 ### 1. Install the tools
 
-You need Linux, or Windows 10/11 with WSL running Ubuntu, plus GCC, Make and
-Python 3. On Ubuntu:
+You need Linux, or Windows 10/11 with WSL running Ubuntu. On Windows, first run
+`wsl --install -d Ubuntu` in an administrator PowerShell, then open the Ubuntu
+app. In Ubuntu:
 
 ```sh
 sudo apt update
-sudo apt install -y build-essential python3 git
+sudo apt install -y build-essential python3 git libslirp-dev libglib2.0-dev pkg-config
 ```
 
-On Windows, first run `wsl --install -d Ubuntu` in an administrator PowerShell,
-then open the Ubuntu app and run the commands above. No Python packages, Node.js
-or frontend build are needed.
+The last three packages are optional; they give dropped firmware its virtual
+network. No Python packages, Node.js or frontend build are needed.
 
-### 2. Build and self-test
+### 2. Get the code
 
 ```sh
 git clone https://github.com/digitake/esp8266-emulator.git
-cd esp8266-emulator
-make
-make check
 ```
 
-`make check` uses no firmware. It ends with
-`watchdog busy-loop evidence: PASS`.
+### 3. Start it
 
-### 3. Get a firmware image
+- **Windows:** double-click `emulator.cmd` in the cloned folder.
+- **Linux or the Ubuntu shell:** run `bash run-gui.sh` in the cloned folder.
 
-The emulator boots the complete image that would be written at flash address
-0x0. PlatformIO writes it to `.pio/build/<env>/firmware.bin`. Keep the matching
-`firmware.elf` from the same build: with it the GUI shows when `setup()` and
-`loop()` start.
+The first start builds the emulator, which takes a minute. Then the GUI is at
+**http://127.0.0.1:8266/**, and on Windows your browser opens it. Ctrl+C or
+closing the window stops it.
 
-If you have no firmware yet, build the example with
-[PlatformIO Core](https://docs.platformio.org/en/latest/core/installation/index.html):
+To start it from any folder by typing `esp8266emu`, run `.\emulator.cmd -Install`
+once in PowerShell.
+
+### 4. Drop your firmware on the page
+
+Drag `firmware.bin` and `firmware.elf` onto the page; PlatformIO writes both to
+`.pio/build/<env>/`. The chip boots at once. The `.elf` lets the GUI show when
+`setup()` and `loop()` start, and for an Arduino 3.1.2 image it switches on the
+network. Every host name the firmware looks up then leads to your own computer.
+
+No firmware yet? Build the example with
+[PlatformIO Core](https://docs.platformio.org/en/latest/core/installation/index.html)
+and drop the two files from `examples/hello/.pio/build/esp12e/`:
 
 ```sh
 pio run -d examples/hello
 ```
 
-The example prints to the serial port, blinks GPIO2, switches GPIO5 while GPIO0
-is held LOW, and echoes what you type.
-
-### 4. Start the GUI
-
-From Linux or the Ubuntu shell:
-
-```sh
-bash run-gui.sh --bin examples/hello/.pio/build/esp12e/firmware.bin \
-  --elf examples/hello/.pio/build/esp12e/firmware.elf \
-  --profile-file examples/gpio-profile.json
-```
-
-Then open **http://127.0.0.1:8266/**. From Windows PowerShell, in the cloned
-folder, use this instead. It builds and runs inside WSL and opens the browser:
-
-```powershell
-.\run-gui.ps1 -Bin examples\hello\.pio\build\esp12e\firmware.bin `
-  -Elf examples\hello\.pio\build\esp12e\firmware.elf `
-  -ProfileFile examples\gpio-profile.json
-```
-
-Things to try:
+Things to try with it:
 
 - Click the **GPIO0** pad. The console prints `button pressed`, and GPIO5 goes HIGH.
 - Type `hi` into the box under the console. The firmware answers `you typed: hi`.
 - Press **Reset**, then **Power cycle**, and watch the Boot card's reset history.
 
-Run `bash run-gui.sh` without `--bin` and drag any `.bin` and `.elf` onto the
-page instead. Press Ctrl+C in the terminal to stop it.
+Start with `.\emulator.cmd -ProfileFile examples\gpio-profile.json` (or
+`bash run-gui.sh --profile-file examples/gpio-profile.json`) to also see the
+example's button, relay and LED on a faceplate.
 
 ## What the GUI shows
 
@@ -114,7 +101,7 @@ page instead. Press Ctrl+C in the terminal to stop it.
 | Board | ESP-12F drawing with each pin's live level and mode. Click a pad to drive it LOW, HIGH or release it. |
 | Boot | ROM → eboot → app → SDK → `setup()` → `loop()` timeline, and the reason for every reset |
 | Signals | Logic-analyzer trace of recent pin changes |
-| Network | Soft AP and station state, as reported by the firmware; with `--net-profile`, the virtual station's IP, packet counts and links to forwarded ports |
+| Network | Soft AP and station state, as reported by the firmware; on the virtual network, its IP, packet counts and a link to its web server |
 | Serial console | UART output with credentials masked; send text to the firmware |
 
 The **Reset**, **Power cycle** and **Erase flash** buttons act like the real
@@ -130,7 +117,7 @@ See [Use the GUI](docs/USER-MANUAL.md#6-use-the-gui) for every control.
 | Find why a boot fails | The Boot card, the **emulator log** toggle, `--strict` | [Debug a boot](docs/USER-MANUAL.md#11-debug-firmware-that-does-not-boot) |
 | Prove nothing changed | `scripts/evidence.py`, then `scripts/regression.py` | [Reports and regression](docs/USER-MANUAL.md#12-reports-regression-and-ota-tests) |
 | Test an OTA update | `scripts/ota_rehearsal.py` with your own images, offline | [OTA tests](docs/USER-MANUAL.md#12-reports-regression-and-ota-tests) |
-| Give firmware a network | `make network`, then `build/esp8266emu-net --net-profile …`, or in the GUI `bash run-gui.sh --net-profile …` | [Virtual network](docs/USER-MANUAL.md#virtual-network-experimental) |
+| Give firmware a network | Install libslirp and drop the `.bin` with its `.elf`; headless: `build/esp8266emu-net --net-profile …` | [The network in the GUI](docs/USER-MANUAL.md#the-network-in-the-gui) |
 | Emulate an ESP8285 or a given flash size | `--chip esp8285` or `--flash-size 0x200000` | [Chip and flash](docs/USER-MANUAL.md#chip-and-flash-options) |
 
 ## How it works
@@ -157,6 +144,7 @@ the image. The GUI server only listens on 127.0.0.1 and refuses other host names
 
 | Folder | Contents |
 | --- | --- |
+| `emulator.cmd`, `run-gui.sh` | One-command launchers for Windows and Linux |
 | `src/` | The emulator in C: CPU, ROM services, peripherals, networking adapter |
 | `gui/` | Local web server (Python standard library) and the single-page GUI |
 | `scripts/` | Reports, regression, OTA, profiling and symbol tools |

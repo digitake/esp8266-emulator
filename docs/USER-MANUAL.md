@@ -45,12 +45,12 @@ With it you can:
 
 Know the limits before you start:
 
-- **No radio.** In the GUI and the default build there is no network at all.
-  Firmware can start a soft AP or scan, but nothing can join it and scans find no
-  access points. An experimental
-  [virtual network](#virtual-network-experimental) for headless runs gives
-  Arduino core 3.1.2 firmware a station connection through your host; it needs a
-  separate build and a profile made from the firmware's ELF.
+- **No radio.** Firmware can start a soft AP or scan, but nothing can join it and
+  scans find no access points. Instead, an experimental
+  [virtual network](#virtual-network-experimental) gives Arduino core 3.1.2
+  firmware a Wi-Fi station connection. Once libslirp is installed, the GUI turns it
+  on by itself for a `.bin` dropped with its `.elf`. By default the firmware
+  reaches only your own computer.
 - **Idealized timing.** One instruction per cycle, ideal clocks and instant flash
   writes. It is a functional debugging tool, not a cycle-accurate or electrical
   board model.
@@ -64,24 +64,30 @@ the small example sketch in [examples/hello](../examples/hello).
 
 ## 2. Quick start
 
-On Linux, or in a WSL Ubuntu shell (see [section 3](#3-install-and-build) for
-installing the tools):
+Install the tools first ([section 3](#3-install-and-build)), then get the code:
 
 ```sh
 git clone https://github.com/digitake/esp8266-emulator.git
-cd esp8266-emulator
-make && make check
-bash run-gui.sh --bin /path/to/firmware.bin --elf /path/to/firmware.elf
 ```
 
-Open **http://127.0.0.1:8266/**. On Windows, run this from PowerShell in the
-cloned folder instead of the last command; it opens the browser for you:
+**Start it with one command.** On Windows, double-click `emulator.cmd` in the
+cloned folder, or run it from a terminal. It builds the emulator inside WSL, starts
+the GUI and opens **http://127.0.0.1:8266/** in your browser. On Linux, or in the
+Ubuntu shell, run `bash run-gui.sh` in the folder and open that address yourself.
+
+**Drop your firmware on the page.** Drag `firmware.bin` and `firmware.elf` from
+your build folder onto the page. The chip boots at once. If libslirp is installed,
+an Arduino core 3.1.2 image dropped with its `.elf` also gets Wi-Fi, which reaches
+only your own computer ([Network](#network)).
+
+To stop the emulator, press Ctrl+C in its window or close the window.
+
+To start it from any folder by typing `esp8266emu`, run this once in the cloned
+folder:
 
 ```powershell
-.\run-gui.ps1 -Bin C:\path\to\firmware.bin -Elf C:\path\to\firmware.elf
+.\emulator.cmd -Install
 ```
-
-Press Ctrl+C in the terminal to stop the emulator.
 
 ### Your first run with the example
 
@@ -98,8 +104,9 @@ bash run-gui.sh --bin examples/hello/.pio/build/esp12e/firmware.bin \
 ```
 
 If PlatformIO is installed on Windows rather than in WSL, run `pio run` from
-PowerShell and start the GUI with `run-gui.ps1`, using the same paths with
-backslashes. Both sides see the same folder.
+PowerShell and start the GUI with `.\emulator.cmd -ProfileFile examples\gpio-profile.json`,
+then drop the two files from `examples\hello\.pio\build\esp12e` on the page. Both
+sides see the same folder.
 
 What you should see:
 
@@ -125,7 +132,7 @@ The rest of this manual explains each of these steps in detail.
 | Operating system | Linux, or Windows 10/11 with WSL running Ubuntu |
 | Tools | GCC (GNU C11), GNU Make, Python 3.8 or later |
 | Browser | Any current browser on the same computer |
-| Optional, virtual network | `libslirp-dev`, `libglib2.0-dev` and `pkg-config`, only for `make network` |
+| Optional, virtual network | `libslirp-dev`, `libglib2.0-dev` and `pkg-config`. With them, the GUI gives Arduino 3.1.2 images Wi-Fi, and `make network` builds the headless network runner. |
 | Optional, example sketch | [PlatformIO Core](https://docs.platformio.org/en/latest/core/installation/index.html), only to build [examples/hello](../examples/hello) |
 
 No Python packages, Node.js or frontend build are needed. On Ubuntu, native or
@@ -134,6 +141,12 @@ under WSL:
 ```sh
 sudo apt update
 sudo apt install -y build-essential python3 git
+```
+
+For the virtual network, also install:
+
+```sh
+sudo apt install -y libslirp-dev libglib2.0-dev pkg-config
 ```
 
 On Windows, install WSL with Ubuntu first from an administrator PowerShell, then
@@ -225,6 +238,46 @@ differ for every build.
 
 ## 5. Start the GUI
 
+### On Windows: emulator.cmd
+
+Double-click `emulator.cmd` in the repository folder, or run it from a terminal:
+
+```powershell
+.\emulator.cmd [-Bin FILE] [-Elf FILE] [-ProfileFile FILE] [-Port N] [-Offline | -Internet]
+```
+
+It runs `run-gui.ps1` with PowerShell's script policy relaxed for that one run,
+which runs `run-gui.sh` inside WSL. The first start builds the emulator, which
+takes a minute; later starts take a few seconds. Your browser opens as soon as the
+GUI answers. Press Ctrl+C or close the window to stop it. When it stops with an
+error, the window stays open so you can read why.
+
+If the GUI is already running on that port, the launcher opens the browser on it
+and exits. If another program uses the port, it says so; start with another
+`-Port`.
+
+Run `.\emulator.cmd -Install` once to add the command `esp8266emu`, which starts the
+emulator from any folder and takes the same parameters. It puts a two-line
+`esp8266emu.cmd` into `%LOCALAPPDATA%\Microsoft\WindowsApps`, a folder that is on
+your PATH already; delete that file to remove it.
+
+| Parameter | Default | Meaning |
+| --- | --- | --- |
+| `-Bin`, `-Elf`, `-ProfileFile` | none | Windows paths, passed to `--bin`, `--elf` and `--profile-file` |
+| `-Port` | `8266` | Port on 127.0.0.1 |
+| `-Offline`, `-Internet` | neither | Passed as `--offline` and `--internet` (see [the network in the GUI](#the-network-in-the-gui)) |
+| `-Workdir` | `~/.cache/esp8266-emulator` in WSL | Passed to `--workdir`; a path that starts with `/` is a WSL path |
+| `-Distro` | `Ubuntu` | The WSL distribution that runs the emulator; list yours with `wsl -l -q` |
+| `-NoBrowser` | off | Do not open the browser |
+| `-NetProfile`, `-NetCapture` | none | Passed to `--net-profile` and `--net-capture`. A path that starts with `/` is taken as a WSL path, so a profile made in Ubuntu works as is. |
+| `-NetForward`, `-NetHost` | none | Passed to `--net-forward` and `--net-host`; separate several with commas: `-NetForward 8080:80,8081:81` |
+| `-Install` | | Add the `esp8266emu` command, then exit |
+
+`run-gui.ps1` takes the same parameters if you prefer to start it from PowerShell.
+It does not offer `--speed`. Saved state lives in your WSL home folder, which
+Windows Explorer shows at
+`\\wsl$\Ubuntu\home\<linux-user>\.cache\esp8266-emulator`.
+
 ### From a Linux or WSL shell
 
 ```sh
@@ -235,77 +288,70 @@ The script builds the emulator, then starts the local server and prints:
 
 ```text
 ESP8266 emulator GUI: http://127.0.0.1:8266/  (loopback only; Ctrl+C to stop)
+virtual network: on for a .bin dropped with its .elf (Arduino core 3.1.2/lwIP2); local only: every name leads to this PC
 ```
 
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `--bin FILE` | none | Boot this image at startup. Without it the page waits for you to drop a file. |
-| `--elf FILE` | none | Matching ELF for `setup()`/`loop()` tracking |
+| `--elf FILE` | none | Matching ELF for `setup()`/`loop()` tracking and the virtual network |
 | `--profile-file FILE` | none | Load a [GPIO profile](#8-gpio-profiles) and make it the default view |
 | `--port N` | `8266` | Port on 127.0.0.1 |
-| `--speed X` | `1` | Initial speed: `1` real time, `0` as fast as possible (not with `--net-profile`) |
+| `--speed X` | `1` | Initial speed: `1` real time, `0` as fast as possible. Networked images run at `1` or slower. |
 | `--workdir DIR` | `~/.cache/esp8266-emulator` | Where uploaded images and saved flash are kept |
-| `--net-profile FILE` | none | Experimental: run the images this [network profile](#virtual-network-experimental) binds on the virtual network |
-| `--net-forward HOST:GUEST` | none | Forward `127.0.0.1:HOST` to port GUEST of the guest, for example `8080:80` for its web server. Repeat for more ports, up to 16. |
-| `--net-host NAME=IP` | none | Answer the guest's DNS query for NAME with IP, for example `broker.example.test=10.0.2.2` for a broker on your computer. Up to 16. |
+| `--offline` | off | Never use the virtual network |
+| `--internet` | off | Let networked images reach the internet as well as this computer |
+| `--net-forward HOST:GUEST` | guest 80 on the first free port from 8080 | Forward `127.0.0.1:HOST` to port GUEST of the guest, for example `8080:80` for its web server. Repeat for more ports, up to 16. |
+| `--net-host NAME=IP` | none | Answer the guest's DNS query for NAME with IP instead. Up to 16. |
 | `--net-capture FILE` | none | Write the guest's Ethernet frames to a PCAP file. It starts over whenever the GUI starts a new emulator process (an upload or **Erase flash**). Captures can contain credentials. |
+| `--net-profile FILE` | none | Run only the images this [network profile](#virtual-network-experimental) binds on the network |
 
 Ctrl+C stops the server. The emulated chip is shut down cleanly and its flash is
 saved.
 
-The four `--net-` options are off by default; without them the GUI runs exactly as
-before. `--net-forward`, `--net-host` and `--net-capture` need `--net-profile`.
-With `--net-profile`, the server first builds `build/esp8266emu-net`, which takes
-a while the first time. Without libslirp it stops and names the packages to
-install: `sudo apt install -y libslirp-dev libglib2.0-dev pkg-config`.
+### The network in the GUI
+
+At startup the server builds `build/esp8266emu-net`, the network runner. That
+needs libslirp:
 
 ```sh
-bash run-gui.sh --bin firmware.bin --elf firmware.elf \
-  --net-profile /tmp/network-profile.txt --net-forward 8080:80
+sudo apt install -y libslirp-dev libglib2.0-dev pkg-config
 ```
 
-The profile binds exact builds, so the GUI checks every image you load against
-the SHA-256 hashes in it. An image the profile binds runs on the network runner;
-any other image runs offline as usual, and the Network card says why. The profile
-is read again for every image, so a regenerated profile takes effect with the next
-upload. Speed `0` is refused while the virtual network runs: `--speed 0` together
-with `--net-profile` stops at startup, and the page's **max** button is off
-([Network](#network) shows what the page displays). Forwarded ports listen on
-127.0.0.1 only, and the GUI keeps its own loopback-only checks.
+Without it the GUI runs as before, prints how to install it, and the
+[Network](#network) card says the same.
 
-### From Windows PowerShell
+With the runner, every image you load **with its ELF** is checked. If it is an
+Arduino core 3.1.2/lwIP2 image, it runs on the virtual network; otherwise it runs
+offline and the Network card says why. A `.bin` without its `.elf` always runs
+offline, because the network adapter finds its hooks through the ELF's symbols.
+The GUI writes the network profile for you, to `network-profile.txt` in the work
+directory. It covers the image and up to seven other uploaded images that pass,
+so an OTA update from one to another keeps its network.
 
-```powershell
-.\run-gui.ps1 [-Bin FILE] [-Elf FILE] [-ProfileFile FILE] [-Port N] [-Distro NAME]
-```
+The network is **local only** unless you start with `--internet`:
 
-| Parameter | Default | Meaning |
-| --- | --- | --- |
-| `-Bin`, `-Elf`, `-ProfileFile` | none | Windows paths, passed to `--bin`, `--elf` and `--profile-file` |
-| `-Port` | `8266` | Port on 127.0.0.1 |
-| `-Distro` | `Ubuntu` | The WSL distribution that runs the emulator; list yours with `wsl -l -q` |
-| `-NetProfile`, `-NetCapture` | none | Passed to `--net-profile` and `--net-capture`. A path that starts with `/` is taken as a WSL path, so a profile made in Ubuntu works as is. |
-| `-NetForward`, `-NetHost` | none | Passed to `--net-forward` and `--net-host`; separate several with commas: `-NetForward 8080:80,8081:81` |
+- Every host name the firmware looks up resolves to your computer, `10.0.2.2`,
+  so its broker, update server and API calls go to programs on your computer.
+  `--net-host NAME=IP` gives a name another address.
+- Packets for any other network are dropped. Nothing the firmware sends reaches
+  your LAN or the internet, even if it uses an IP address directly.
+- Every service that listens on your computer's loopback interface is reachable
+  from the firmware.
 
-The script runs `run-gui.sh` inside WSL and opens your default browser as soon as
-the server answers. It does not offer `--speed` or `--workdir`. To use those, run
-`run-gui.sh` from the Ubuntu shell. Saved state lives in your WSL home folder,
-which Windows Explorer shows at
-`\\wsl$\Ubuntu\home\<linux-user>\.cache\esp8266-emulator`.
+The guest's port 80 is forwarded to the first free port from 8080; the Network
+card links to it. `--net-forward` replaces that default. Live networking needs a
+positive speed, so **max** is off while an image runs on the network, and an
+upload switches the speed to `1×` if **max** was selected.
 
-The virtual network needs libslirp inside that distribution (see above), and the
-profile must come from `scripts/network_profile.py` run in WSL, so that the image
-paths in it are Linux paths:
+`--net-profile FILE` switches the automatic profile off: then only the images that
+profile binds run on the network, each checked against the SHA-256 in it. The
+network stays local only unless you add `--internet`. A profile must come from
+`scripts/network_profile.py` run in WSL, so that the image paths in it are Linux
+paths:
 
-```powershell
-.\run-gui.ps1 -Bin C:\fw\firmware.bin -Elf C:\fw\firmware.elf -NetProfile /tmp/network-profile.txt -NetForward 8080:80
-```
-
-If PowerShell reports that running scripts is disabled, start the launcher for
-that one run like this:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\run-gui.ps1 -Bin C:\path\to\firmware.bin
+```sh
+bash run-gui.sh --net-profile /tmp/network-profile.txt --net-forward 8080:80
 ```
 
 ### More than one emulator
@@ -328,7 +374,7 @@ bash run-gui.sh --port 8267 --workdir /tmp/esp-second --bin /path/to/other.bin
   drop new files.
 
 Drop both files in one go: an ELF dropped on its own is rejected, and a `.bin`
-dropped on its own runs without an ELF. The chip boots immediately. Uploads are
+dropped on its own runs without an ELF and without the network. The chip boots immediately. Uploads are
 limited to 16 MiB. Loading the exact same image again resumes its saved flash; a
 rebuilt image starts with fresh flash (see [section 7](#7-resets-flash-and-saved-state)).
 
@@ -452,19 +498,20 @@ time.
 ### Network
 
 The Network card shows what the SDK's own serial messages say about Wi-Fi. When
-the GUI was started with `--net-profile` and the image runs on the virtual
-network, it also shows what the network runner reports:
+the image runs on the virtual network ([the network in the GUI](#the-network-in-the-gui)),
+it also shows what the network runner reports:
 
 | Badge | Meaning |
 | --- | --- |
 | soft AP | `-` until the SDK reports it; green with its IP when up (`add if1`, `dhcp server start`, `AP started`); `down` after `del if1` or `bcn 0` |
 | station | Offline runs only. Idle, scanning or connection state from `scandone`, `connected with`, `ip:` and similar lines. On the virtual network the SDK prints none of these for the virtual connection, so **virtual station** takes this badge's place. |
 | scans | Wi-Fi scans this boot |
-| host network | Offline runs only. `unavailable: no host network bridge` without `--net-profile`. With it, an image the profile does not bind shows `offline: this image (sha256 …) is not in the network profile`, and a profile that cannot be read shows `offline: network profile unusable (…)`. Hover for the whole text. |
+| host network | Offline runs only, and why the image is offline. `offline: drop the .elf together with the .bin…` when you dropped no ELF; `offline: not an Arduino core 3.1.2/lwIP2 network image (…)` with the check that failed; `offline: the network runner is not built…` without libslirp; `unavailable: no host network bridge` with `--offline`. With `--net-profile`: `offline: this image (sha256 …) is not in the network profile`, or `offline: network profile unusable (…)`. Hover for the whole text. |
 | virtual station | Virtual network only. `starting`, then `waiting for the application` until the runner matches the profile at the application stage, then `not connected` or green `connected`. `halted` when execution stopped; `stopped: …` with the runner's last message when it exited, for example because the BIN named in the profile was rebuilt. |
 | IP | The guest's address once connected, normally `10.0.2.15` |
 | packets | Ethernet frames the guest sent (`tx`) and received (`rx`), and how many were dropped |
-| guest :PORT | One per `--net-forward`: a link to `http://127.0.0.1:HOST/`, which opens that guest port in a new tab |
+| guest :PORT | One per forwarded port, by default the guest's port 80: a link to `http://127.0.0.1:HOST/`, which opens that guest port in a new tab |
+| internet | `off: every name leads to this PC (10.0.2.2)` while the network is local only; absent with `--internet` |
 
 Hover a badge for the MAC addresses. The badges stay `-` if the firmware prints
 none of these messages. The runner's badges are refreshed twice a second.
@@ -474,10 +521,11 @@ needs a positive speed. Clicking it says so, and the server refuses speed 0 as
 well. If **max** was selected when you load an image that runs on the virtual
 network, the GUI switches to `1×` and says so in the emulator log.
 
-Without `--net-profile`, nothing the GUI shows here is a real network. For
-firmware that must reach a broker or a web server, start the GUI with
-[`--net-profile`](#5-start-the-gui), or use the headless
-[virtual network](#virtual-network-experimental).
+On the local-only network, the firmware's broker, update server and API host all
+resolve to your computer. To test MQTT or an OTA update, run that service on your
+computer, for example a broker on port 1883 or 8883 and a web server holding the
+update image. For firmware that needs settings stored in flash before it joins
+Wi-Fi, see [troubleshooting](#14-troubleshooting).
 
 ### Serial console
 
@@ -633,7 +681,7 @@ options at the end of this table are accepted as well.
 | `--mmiotrace LO:HI` | none | Log peripheral register accesses in a hex address range to stderr |
 | `--trace` | off | Verbose exception and interrupt logging |
 | `--profile FILE` | none | Write a sampled PC histogram at exit |
-| `--net-profile FILE`, `--net-forward`, `--net-host`, `--net-capture` | none | [Virtual network](#virtual-network-experimental); `build/esp8266emu-net` only |
+| `--net-profile FILE`, `--net-forward`, `--net-host`, `--net-local`, `--net-capture` | none | [Virtual network](#virtual-network-experimental); `build/esp8266emu-net` only |
 
 The runner continues until `--max-seconds` or `--until-loops` is reached, a `quit`
 command arrives, or stdin closes while commands are being read. With `--no-stdin`
@@ -759,6 +807,10 @@ frames to a user-mode NAT on your host (libslirp), so the firmware can use DHCP,
 DNS, MQTT and HTTP. Point it at test services on your own computer. There is no
 radio, WPA, soft AP or scanning.
 
+In the GUI all of this is automatic: drop the `.bin` with its `.elf`
+([the network in the GUI](#the-network-in-the-gui)). The steps below run the
+network headless.
+
 1. Install the extra packages and build the network runner:
 
    ```sh
@@ -785,16 +837,7 @@ radio, WPA, soft AP or scanning.
      --no-stdin --report /tmp/network-report.json
    ```
 
-   Or use the same profile from the GUI instead, which builds the runner for you
-   and shows the station, its IP, packet counts and forwarded ports in the
-   [Network](#network) card:
-
-   ```sh
-   bash run-gui.sh --net-profile /tmp/network-profile.txt --net-forward 8080:80
-   ```
-
-   The GUI runs only the images the profile binds on the network runner. Others
-   run offline. See [section 5](#5-start-the-gui) for its options.
+   Add `--net-local` to keep it on your computer, as the GUI does.
 
 The guest gets address `10.0.2.15`. From the guest, your host is `10.0.2.2` and the
 DNS server is `10.0.2.3`.
@@ -803,9 +846,11 @@ DNS server is `10.0.2.3`.
 | --- | --- |
 | `--net-forward 8080:80` | Forward `127.0.0.1:8080` on the host to port 80 of the guest, for example to open its web server |
 | `--net-host broker.example.test=10.0.2.2` | Answer the guest's DNS query for that name with that address; up to 16 names |
+| `--net-local` | Local only: every other name resolves to `10.0.2.2`, this computer, and packets for any other network are dropped |
 | `--net-capture /tmp/net.pcap` | Record every Ethernet frame for Wireshark. Captures can contain credentials. |
 
-`run-gui.sh` takes the same three options together with `--net-profile`.
+`run-gui.sh` takes `--net-forward`, `--net-host` and `--net-capture` as well; it
+uses `--net-local` unless you pass `--internet`.
 
 Network runs depend on host timing, so they are not repeatable the way offline
 runs are. [Virtual networking](NETWORKING.md) describes the design and what has
@@ -1079,7 +1124,7 @@ criteria.
 | --- | --- |
 | `gcc: not found` or `make: not found` | Install the build tools: `sudo apt install -y build-essential python3` |
 | `build the emulator first: make -C …` | `gui/server.py` was started directly. Run `make`, or use `run-gui.sh`, which builds first. |
-| `OSError: [Errno 98] Address already in use` | Another program, perhaps another emulator, uses the port. Start with `--port 8267` (Linux) or `-Port 8267` (Windows). |
+| `OSError: [Errno 98] Address already in use`, or `Port 8266 is already in use` from `emulator.cmd` | Another program, perhaps another emulator, uses the port. Start with `--port 8267` (Linux) or `-Port 8267` (Windows). If it is the emulator GUI itself, `emulator.cmd` just opens it. |
 | PowerShell: running scripts is disabled | Use `powershell -ExecutionPolicy Bypass -File .\run-gui.ps1 …` |
 | `wslpath failed for …` | The Windows path does not exist, or `-Distro` names a distribution that is not installed (`wsl -l -q`). |
 | Browser shows `forbidden host` | Open exactly `http://127.0.0.1:<port>/` or `http://localhost:<port>/`, with the port the server printed. |
@@ -1092,7 +1137,11 @@ criteria.
 | `loop()` row shows loop-task runs | No ELF was loaded. Drop the `.bin` and `.elf` together. |
 | Console stops after the boot messages | The firmware may write to UART1 (violet), move TX to another pin (tick **off-wire output**), or not print at all. Tick **emulator log** for more detail. |
 | Boot counter keeps climbing | The firmware keeps resetting. Check the reset reason; 4 is the watchdog ([section 11](#11-debug-firmware-that-does-not-boot)). |
-| Wi-Fi never connects; station shows `scanned (no access point: the emulator has no radio)` | Expected in the default build and in the GUI without `--net-profile`, which have no network. For network tests use the [virtual network](#virtual-network-experimental). |
+| Wi-Fi never connects; station shows `scanned (no access point: the emulator has no radio)` | The image runs offline; the host network badge says why. Drop the `.bin` together with its `.elf`, and install libslirp if the badge asks for it ([the network in the GUI](#the-network-in-the-gui)). |
+| Network card: `offline: drop the .elf together with the .bin…` | The network needs the ELF from the same build. Drop both files in one go. |
+| Network card: `offline: not an Arduino core 3.1.2/lwIP2 network image (…)` | The image was not built with Arduino core 3.1.2 and lwIP2, or the ELF is from another build. The text in brackets names the check that failed. The image still runs, without a network. |
+| Network card: `offline: the network runner is not built…`; the launcher prints `virtual network: off, libslirp is missing` | Install libslirp in WSL: `sudo apt install -y libslirp-dev libglib2.0-dev pkg-config`, then start the GUI again. |
+| Virtual station stays `not connected` | The firmware has not joined Wi-Fi. Firmware that keeps its Wi-Fi settings in flash and waits in its own setup mode for them stays there: the virtual network cannot reach a soft AP. Run it headless from a full flash image that already holds the settings, with a network profile made from the plain `.bin` ([virtual network](#virtual-network-experimental)). |
 | `--net-profile needs the network runner …, and building it needs libslirp` | The GUI was started with `--net-profile`, but libslirp is missing. Install it: `sudo apt install -y libslirp-dev libglib2.0-dev pkg-config`. |
 | Network card: `offline: this image (sha256 …) is not in the network profile` | The profile binds exact builds. Regenerate it with `scripts/network_profile.py` for this BIN and its ELF, then load the image again. |
 | `live networking needs a positive speed: the network runner refuses 0 (max)` | The image runs on the virtual network; choose `1×` or `¼×`. |
@@ -1121,11 +1170,9 @@ them. See [contributing](../CONTRIBUTING.md).
 # Build and self-test
 make && make check
 
-# GUI (Linux/WSL), then open http://127.0.0.1:8266/
-bash run-gui.sh --bin fw.bin --elf fw.elf [--profile-file board.json] [--port N]
-
-# GUI on the virtual network (experimental; needs libslirp)
-bash run-gui.sh --bin fw.bin --elf fw.elf --net-profile net.txt --net-forward 8080:80
+# GUI (Linux/WSL): open http://127.0.0.1:8266/ and drop fw.bin + fw.elf on it.
+# With libslirp, Arduino 3.1.2 images get a local-only network by themselves.
+bash run-gui.sh [--profile-file board.json] [--port N] [--offline | --internet]
 
 # Quick headless boot check
 build/esp8266emu --flash fw.bin --speed 0 --max-seconds 10 --no-stdin --quiet
@@ -1149,13 +1196,16 @@ build/esp8266emu --flash fw.bin --chip esp8285 --speed 0 --max-seconds 10 --no-s
 # Virtual network (experimental)
 make network
 python3 -I scripts/network_profile.py --core-version 3.1.2 --image fw.bin fw.elf --out net.txt
-build/esp8266emu-net --flash fw.bin --net-profile net.txt --speed 1 --net-forward 8080:80
+build/esp8266emu-net --flash fw.bin --net-profile net.txt --speed 1 --net-local --net-forward 8080:80
 ```
 
 ```powershell
-# GUI from Windows
-.\run-gui.ps1 -Bin C:\path\fw.bin -Elf C:\path\fw.elf [-ProfileFile board.json] [-Port N]
-.\run-gui.ps1 -Bin C:\path\fw.bin -Elf C:\path\fw.elf -NetProfile /tmp/net.txt -NetForward 8080:80
+# GUI from Windows: double-click emulator.cmd, or
+.\emulator.cmd [-ProfileFile board.json] [-Port N] [-Offline | -Internet]
+
+# Once: add the esp8266emu command, then start the GUI from any folder
+.\emulator.cmd -Install
+esp8266emu
 ```
 
 ## 16. Glossary

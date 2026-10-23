@@ -50,6 +50,15 @@ service. The guest still sends a real DNS request to `10.0.2.3`; the backend
 answers matching IPv4 A queries. Other names use the normal DNS backend.
 Repeat the option for up to 16 names. Overrides remain in place across resets.
 
+`--net-local` keeps the guest on this host. Every name without a `--net-host`
+override resolves to `10.0.2.2`, and the backend drops guest frames for any
+address outside `10.0.2.0/24` except broadcast and multicast, and every frame
+that is neither IPv4 nor ARP, before slirp sees them. That includes DNS queries the overrides do not answer, so names do not leak to the host's
+resolver. The guest can still reach every service on the host's loopback
+interface. The GUI uses this mode unless it is started with `--internet`, and it
+writes the profile itself for each uploaded BIN that comes with its ELF and passes
+the checks of `scripts/network_profile.py`.
+
 The adapter currently models one station interface. Real guest DHCP, DNS, MQTT,
 HTTP update and station web upload have passed with the bundled reference.
 WiFi OFF/STA transitions and DHCP reacquisition are checked on both OTA boots.
