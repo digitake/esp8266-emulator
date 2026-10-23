@@ -31,7 +31,7 @@ static bool enabled;
 typedef struct { uint16_t size; uint8_t data[NET_FRAME_MAX]; } frame_t;
 static struct {
     uint64_t generation;
-    bool busy, lwip_seen, connected, initialized, start, stop, dhcp, dhcp_running;
+    bool busy, updating, lwip_seen, connected, initialized, start, stop, dhcp, dhcp_running;
     uint32_t event_cb, ip, mask, gw, static_ip, static_mask, static_gw;
     uint8_t ssid[32], mac[6], bssid[6];
     uint32_t releases[NET_QUEUE_MAX];
@@ -154,6 +154,13 @@ bool net_hook(uint32_t pc) {
         if (a != 0) return false;
         set_ip(b, C.a[4], C.a[5]);
         return return_value(0);
+    case S_UPDATE:
+        // The closed SDK can finish installing its radio-side peer after our
+        // virtual station already received a lease. Its stale zero address
+        // must not reset the active lwIP interface. Public wifi_set_ip_info
+        // requests are cached below and applied by the deferred owner instead.
+        if (a == 0 && n.initialized && !n.updating) return return_value(0);
+        return false;
     case S_CONNECT:
         if (!n.connected) n.start = true;
         return return_value(1);
@@ -173,7 +180,7 @@ bool net_hook(uint32_t pc) {
         if (a != 0) return false;
         if (!ram(b, 12)) return return_value(0);
         n.static_ip = hle_rd32(b); n.static_mask = hle_rd32(b + 4); n.static_gw = hle_rd32(b + 8);
-        if (n.connected) n.start = true;
+        if (n.connected && !n.dhcp) n.start = true;
         return return_value(1);
     case S_EVENT_CB: n.event_cb = a; return return_value(0);
     case S_DHCPC_START:
@@ -242,7 +249,9 @@ void net_service_guest(void) {
             hle_write(scratch, n.mac, 6);
             uint32_t args[7] = {0, n.dhcp ? 0 : n.static_ip, n.dhcp ? 0 : n.static_mask,
                                n.dhcp ? 0 : n.static_gw, 6, scratch, 1500};
+            n.updating = true;
             call(S_UPDATE, 7, args);
+            n.updating = false;
             n.initialized = true;
             if (n.dhcp) {
                 uint32_t rc = call(S_DHCP_START, 1, &zero);

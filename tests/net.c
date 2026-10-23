@@ -107,6 +107,15 @@ int main(void) {
  assert(hle_rd32(DRAM_BASE+400)==0x0f02000a);
  net_service_guest();assert(events_seen==2);
  hook(S_CONNECT,0,0,0,0);hook(S_DHCPC_START,0,0,0,0);net_service_guest();assert(updates==1);
+ // A late radio-side netif installation must not discard a real DHCP lease.
+ hle_wr32(DRAM_BASE+400,0);hle_wr32(DRAM_BASE+404,0);hle_wr32(DRAM_BASE+408,0);
+ hook(S_IP_SET,0,DRAM_BASE+400,0,0);hook(S_UPDATE,0,0,0,0);net_service_guest();
+ assert(updates==1 && net_get_stats().ip==0x0f02000a);
+ // Public static configuration is still applied after DHCP is stopped.
+ hle_wr32(DRAM_BASE+400,0x2a02000a);hle_wr32(DRAM_BASE+404,0x00ffffff);hle_wr32(DRAM_BASE+408,0x0202000a);
+ hook(S_DHCPC_STOP,0,0,0,0);hook(S_IP_SET,0,DRAM_BASE+400,0,0);net_service_guest();
+ assert(updates==2 && net_get_stats().ip==0x2a02000a);
+ hook(S_DHCPC_START,0,0,0,0);net_service_guest();assert(updates==3);
  uint8_t frame[60];memset(frame,0xAA,sizeof frame);hle_write(DRAM_BASE+2048,frame,60);
  for(unsigned i=0;i<NET_QUEUE_MAX;i++)assert(hook(S_TX,0,DRAM_BASE+512,DRAM_BASE+2048,60)==0);
  assert(hook(S_TX,0,DRAM_BASE+512,DRAM_BASE+2048,60)!=0);assert(sends==NET_QUEUE_MAX && frees==0);
