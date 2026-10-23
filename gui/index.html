@@ -18,96 +18,146 @@ button { font: inherit; color: var(--text); background: var(--panel2); border: 1
 button:hover { border-color: #3a4152; }
 button.active { border-color: var(--blue); color: var(--blue); }
 button:disabled { opacity: .45; cursor: default; }
+button.small { padding: 2px 8px; font-size: 12px; border-radius: 6px; }
 select { font: inherit; color: var(--text); background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 5px 8px; }
 
-header { display: flex; align-items: center; gap: 14px; padding: 10px 18px; border-bottom: 1px solid var(--line);
+/* header: identity, then live readouts */
+header { display: flex; align-items: center; gap: 12px; padding: 8px 16px; border-bottom: 1px solid var(--line);
   background: #11141a; flex-wrap: wrap; }
 .brand { font-weight: 650; letter-spacing: .2px; }
 .brand small { display: block; font-weight: 400; color: var(--muted); font-size: 12px; }
 .chip { display: flex; align-items: center; gap: 8px; padding: 5px 10px; border: 1px solid var(--line);
-  border-radius: 999px; background: var(--panel); font-size: 13px; color: var(--muted); min-width: 0; }
-.chip b { color: var(--text); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
+  border-radius: 999px; background: var(--panel); font-size: 13px; color: var(--muted); min-width: 0; cursor: pointer; }
+.chip b { color: var(--text); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 200px; }
 .spacer { flex: 1; }
+.readouts { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.ro { display: flex; flex-direction: column; justify-content: center; min-width: 74px; min-height: 52px; padding: 4px 10px;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+.ro small { font-size: 10px; text-transform: uppercase; letter-spacing: .5px; color: var(--dim); line-height: 1.2; }
+.ro b { font: 500 15px/1.25 var(--mono); color: var(--text); white-space: nowrap; }
+.ro .spark { width: 64px; height: 14px; display: block; }
+.ro .spark polyline { fill: none; stroke: var(--blue); stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; opacity: .85; }
+.ro.speed { flex-direction: row; align-items: center; gap: 10px; }
+.ro.speed .spdgroup { display: flex; gap: 3px; }
 .pill { padding: 4px 10px; border-radius: 999px; font-weight: 600; font-size: 12.5px; background: #222733; color: var(--muted); }
 .pill.loop { background: rgba(57,217,138,.14); color: var(--green); }
 .pill.boot { background: rgba(90,168,255,.14); color: var(--blue); }
 .pill.halted { background: rgba(255,100,100,.15); color: var(--red); }
-.metric { font: 12.5px var(--mono); color: var(--muted); white-space: nowrap; }
-.metric b { color: var(--text); font-weight: 500; }
 
+/* layout: a scrolling column of cards on the left, the console on the right */
 body { display: flex; flex-direction: column; }
-main { display: grid; grid-template-columns: minmax(360px, 460px) 1fr; gap: 14px; padding: 14px 18px 18px;
+main { display: grid; grid-template-columns: minmax(360px, 440px) 1fr; gap: 12px; padding: 12px 16px 16px;
   flex: 1; min-height: 0; }
-.col { display: flex; flex-direction: column; gap: 14px; min-height: 0; overflow: auto; }
+.col { display: flex; flex-direction: column; gap: 12px; min-height: 0; overflow: auto; }
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; }
-.card h2 { margin: 0; padding: 11px 14px 0; font-size: 12px; font-weight: 600; letter-spacing: .6px;
-  text-transform: uppercase; color: var(--muted); display: flex; align-items: center; gap: 8px; }
-.card h2 .right { margin-left: auto; text-transform: none; letter-spacing: 0; font-weight: 400; }
-.body { padding: 12px 14px 14px; }
+.card h2 { margin: 0; padding: 10px 14px 0; font-size: 12px; font-weight: 600; letter-spacing: .6px;
+  text-transform: uppercase; color: var(--muted); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.card h2 .right { margin-left: auto; text-transform: none; letter-spacing: 0; font-weight: 400; display: flex; gap: 4px; align-items: center; }
+.body { padding: 10px 14px 14px; }
 
-/* device */
-.device-wrap { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 16px 14px 14px; }
+/* board: drop prompt, profile faceplate, module drawing */
+.board { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 10px 12px 10px; }
+.empty { border: 2px dashed var(--blue); border-radius: 14px; padding: 14px 18px; text-align: center; color: var(--muted); width: 100%; }
+.empty b { font-size: 16px; display: block; margin-bottom: 4px; color: var(--text); }
+.empty p { margin: 4px 0; font-size: 12.5px; }
+.chipbox { width: 100%; max-width: 370px; }
+.chipbox svg { width: 100%; height: auto; display: block; overflow: visible; }
+.chipbox.nofw svg { opacity: .35; }
+.pad-g { cursor: pointer; }
+.pad-g.fixed, .pad-g.flash { cursor: default; }
+.pad-g:focus { outline: none; }
+.pad-g .hit { fill: transparent; }
+.pad-g .pin { fill: #2a3040; stroke: #4a5263; stroke-width: 1; transition: fill .05s; }
+.pad-g .pin.hi { fill: var(--green); stroke: #2fb873; filter: drop-shadow(0 0 3px rgba(57,217,138,.8)); }
+.pad-g .pin.z { fill: #121419; stroke: var(--muted); stroke-dasharray: 3 2; }
+.pad-g .pin.unk { fill: #1c2029; stroke: #333a48; }
+.pad-g.flash .pin { fill: url(#hatch); stroke: #3a4152; }
+.pad-g.fixed .pin { fill: #3a4150; stroke: #4a5263; }
+.pad-g.driven .pin { stroke: var(--amber); stroke-width: 2.5; stroke-dasharray: none; }
+.pad-g:hover .pin, .pad-g:focus .pin { stroke-width: 2; }
+.pad-g .nm { font: 600 10px var(--mono); fill: var(--text); }
+.pad-g.flash .nm, .pad-g.fixed .nm { fill: var(--dim); font-weight: 400; }
+.pad-g:hover .nm, .pad-g:focus .nm { fill: #fff; }
+.pad-g .fn { font: 8.5px var(--mono); fill: var(--dim); }
+.pad-g .mode.o { fill: var(--blue); } .pad-g .mode.p { fill: var(--green); } .pad-g .mode.z { fill: var(--amber); } .pad-g .mode.u { fill: var(--violet); }
+.chiplegend { font-size: 11.5px; color: var(--muted); text-align: center; line-height: 1.6; max-width: 420px; }
+.chiplegend code { font-family: var(--mono); }
+.chiplegend .o { color: var(--blue); } .chiplegend .p { color: var(--green); } .chiplegend .z { color: var(--amber); } .chiplegend .u { color: var(--violet); }
+.chiplegend .hi { color: var(--green); } .chiplegend .drv { color: var(--amber); }
+
+/* profile faceplate */
 .plate { position: relative; background: linear-gradient(160deg, #f4f5f7, #d9dce2); border-radius: 22px;
-  box-shadow: 0 10px 30px rgba(0,0,0,.45), inset 0 1px 0 #fff; padding: 34px 22px 22px; display: flex; gap: 16px;
-  justify-content: center; }
-.plate.plug { border-radius: 26px; padding: 34px 30px 24px; }
-.status-led { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); width: 9px; height: 9px;
+  box-shadow: 0 10px 30px rgba(0,0,0,.45), inset 0 1px 0 #fff; padding: 30px 20px 18px; display: flex; gap: 14px;
+  justify-content: center; margin-top: 4px; }
+.plate.plug { border-radius: 26px; padding: 30px 28px 20px; }
+.status-led { position: absolute; top: 11px; left: 50%; transform: translateX(-50%); width: 9px; height: 9px;
   border-radius: 50%; background: #9aa1ad; box-shadow: inset 0 1px 2px rgba(0,0,0,.35); transition: background .05s; }
 .status-led.on { background: var(--blue); box-shadow: 0 0 10px 3px rgba(90,168,255,.75); }
-.status-led-label { position: absolute; top: 8px; left: calc(50% + 10px); font-size: 10px; color: #6b7280; }
-.gang { display: flex; flex-direction: column; align-items: center; gap: 10px; width: 104px; }
+.status-led-label { position: absolute; top: 7px; left: calc(50% + 10px); font-size: 10px; color: #6b7280; }
+.gang { display: flex; flex-direction: column; align-items: center; gap: 8px; width: 96px; }
 .gang.unused { opacity: .32; }
-.lamp { width: 46px; height: 46px; }
+.lamp { width: 40px; height: 40px; }
 .lamp .glass { fill: #c9ccd3; transition: fill .08s; }
 .lamp.on .glass { fill: var(--amber); filter: drop-shadow(0 0 10px rgba(255,181,71,.85)); }
-.pad { width: 86px; height: 86px; border-radius: 50%; border: 0; padding: 0; position: relative;
+.pad { width: 78px; height: 78px; border-radius: 50%; border: 0; padding: 0; position: relative;
   background: radial-gradient(circle at 35% 30%, #ffffff, #e2e5ea 60%, #cfd3da); color: #59606d;
   box-shadow: 0 3px 8px rgba(0,0,0,.25), inset 0 -2px 4px rgba(0,0,0,.08); user-select: none; touch-action: none; }
 .pad .ring { position: absolute; inset: 7px; border-radius: 50%; border: 3px solid #c3c8d0; transition: border-color .05s, box-shadow .05s; }
 .pad.led .ring { border-color: var(--green); box-shadow: 0 0 12px rgba(57,217,138,.8); }
 .pad.down { transform: translateY(1px) scale(.97); box-shadow: 0 1px 3px rgba(0,0,0,.3), inset 0 2px 6px rgba(0,0,0,.15); }
 .pad span { position: relative; font-size: 11px; font-weight: 600; letter-spacing: .4px; }
-.gang .cap { font: 11.5px var(--mono); color: #4b5260; text-align: center; line-height: 1.35; }
+.gang .cap { font: 11px var(--mono); color: #4b5260; text-align: center; line-height: 1.35; }
 .gang .cap b { color: #1f2430; }
-.device-note { font-size: 12px; color: var(--muted); text-align: center; max-width: 420px; }
-.hold { font: 13px var(--mono); color: var(--amber); min-height: 18px; text-align: center; }
+.hold { font: 12.5px var(--mono); color: var(--amber); min-height: 18px; text-align: center; }
 .polarity { display: flex; gap: 6px; align-items: center; font-size: 12px; color: var(--muted); flex-wrap: wrap; justify-content: center; }
-.polarity button { padding: 3px 8px; font-size: 12px; border-radius: 6px; }
+.polarity button { padding: 2px 8px; font-size: 12px; border-radius: 6px; }
 
-/* pins */
-.pins { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 7px; }
-.pin { border: 1px solid var(--line); border-radius: 9px; padding: 6px 8px; background: var(--panel2); cursor: default; }
-.pin.input { cursor: pointer; }
-.pin.input:hover { border-color: #3a4152; }
-.pin.flash { opacity: .35; }
-.pin .top { display: flex; align-items: center; justify-content: space-between; font: 12px var(--mono); }
-.pin .lv { width: 10px; height: 10px; border-radius: 50%; background: #3a4050; }
-.pin .lv.hi { background: var(--green); box-shadow: 0 0 6px rgba(57,217,138,.7); }
-.pin .lv.z { background: transparent; border: 1.5px dashed var(--muted); }
-.pin .role { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.pin .md { font: 10.5px var(--mono); color: var(--dim); }
-.pin .md .o { color: var(--blue); } .pin .md .p { color: var(--green); } .pin .md .z { color: var(--amber); } .pin .md .u { color: var(--violet); }
-.pin.driven { border-color: var(--amber); }
-.legend { font-size: 11.5px; color: var(--muted); margin-top: 8px; line-height: 1.6; }
-.legend code { font-family: var(--mono); }
-
-/* firmware state */
-.stages { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 10px; }
-.stage { font: 11.5px var(--mono); padding: 3px 7px; border-radius: 6px; background: #222733; color: var(--dim); }
-.stage.done { color: var(--text); background: #26303f; }
-.stage.cur { color: #0e1015; background: var(--green); }
-.kv { display: grid; grid-template-columns: 120px 1fr; gap: 4px 10px; font-size: 13px; }
-.kv dt { color: var(--muted); }
-.kv dd { margin: 0; font-family: var(--mono); font-size: 12.5px; word-break: break-word; }
+/* boot: stage timeline, reset history, readout tiles */
+.timeline { display: flex; align-items: flex-start; margin: 6px 0 10px; }
+.step { flex: 1; position: relative; text-align: center; font-size: 11px; color: var(--dim); min-width: 0; }
+.step::before { content: ""; position: absolute; top: 5px; left: -50%; width: 100%; height: 2px; background: #272c37; }
+.step:first-child::before { display: none; }
+.step .dot { width: 12px; height: 12px; border-radius: 50%; background: #222733; border: 2px solid #333a48; margin: 0 auto 4px; position: relative; }
+.step.done { color: var(--text); }
+.step.done .dot, .step.done::before { background: var(--blue); border-color: var(--blue); }
+.step.cur .dot { background: var(--green); border-color: var(--green); box-shadow: 0 0 0 4px rgba(57,217,138,.2); }
+.step .ms { display: block; font: 10.5px var(--mono); color: var(--muted); white-space: nowrap; }
+.step.cur .ms { color: var(--green); }
+.hist { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; font-size: 11px; color: var(--dim); margin-bottom: 10px; }
+.hist .b { font: 11px var(--mono); padding: 2px 7px; border-radius: 999px; background: #222733; color: var(--muted); border: 1px solid transparent; }
+.hist .b.r1 { color: var(--green); } .hist .b.r2 { color: var(--blue); } .hist .b.r3 { color: var(--violet); } .hist .b.r4 { color: var(--red); }
+.hist .b.cur { border-color: currentColor; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 6px; }
+.tile { background: var(--panel2); border: 1px solid var(--line); border-radius: 9px; padding: 6px 9px; min-width: 0; }
+.tile small { display: block; font-size: 10px; text-transform: uppercase; letter-spacing: .5px; color: var(--dim); }
+.tile b { display: block; font: 500 13px var(--mono); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tile span { font-size: 11px; color: var(--muted); }
 .halt { margin-top: 10px; padding: 8px 10px; border-radius: 8px; background: rgba(255,100,100,.1); color: var(--red);
   font: 12.5px var(--mono); display: none; }
+
+/* signals: logic-analyzer view of pin edges */
+.pinchips { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 8px; }
+.pc { font: 10.5px var(--mono); padding: 2px 6px; border-radius: 6px; background: #222733; color: var(--dim); border: 1px solid transparent; cursor: pointer; }
+.pc.on { color: var(--text); border-color: var(--c); }
+.pc.on::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 2px; background: var(--c); margin-right: 4px; vertical-align: 0; }
+#wave { width: 100%; display: none; border-radius: 8px; background: #0b0d11; cursor: crosshair; }
+.sig-empty { font-size: 12px; color: var(--muted); padding: 12px; text-align: center; }
+
+/* network badges */
+.badges { display: flex; flex-wrap: wrap; gap: 6px; }
+.badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 9px; border-radius: 999px; background: #222733; font-size: 12px; color: var(--muted); max-width: 100%; }
+.badge b { font: 500 12px var(--mono); color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 230px; }
+.badge i { width: 8px; height: 8px; border-radius: 50%; background: #3a4050; flex: none; }
+.badge.up i { background: var(--green); box-shadow: 0 0 6px rgba(57,217,138,.7); }
+.badge.down i { background: var(--red); }
+.badge.busy i { background: var(--amber); }
 
 /* console */
 .console-card { display: flex; flex-direction: column; min-height: 0; }
 .console-tools { display: flex; gap: 8px; align-items: center; padding: 8px 14px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
 .console-tools label { font-size: 12.5px; color: var(--muted); display: flex; align-items: center; gap: 5px; cursor: pointer; }
 #console { flex: 1; min-height: 200px; overflow: auto; padding: 10px 14px; font: 12.5px/1.5 var(--mono);
-  white-space: pre-wrap; word-break: break-all; background: #0b0d11; border-radius: 0 0 14px 14px; }
+  white-space: pre-wrap; word-break: break-all; background: #0b0d11; }
 #console .offwire { color: #5d6576; }
 #console .offwire.hide { display: none; }
 #console .u1 { color: var(--violet); }
@@ -115,83 +165,114 @@ main { display: grid; grid-template-columns: minmax(360px, 460px) 1fr; gap: 14px
 #console .emu.hide { display: none; }
 #console .sep { color: var(--blue); }
 .rxbar { display: flex; gap: 8px; padding: 8px 14px; border-top: 1px solid var(--line); }
-.rxbar input { flex: 1; font: 12.5px var(--mono); color: var(--text); background: #0b0d11; border: 1px solid var(--line);
+.rxbar input { flex: 1; min-width: 0; font: 12.5px var(--mono); color: var(--text); background: #0b0d11; border: 1px solid var(--line);
   border-radius: 8px; padding: 6px 9px; }
 
-/* drop */
+/* overlays */
 #drop { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; z-index: 50;
   background: rgba(14,16,21,.82); backdrop-filter: blur(2px); }
 #drop.show { display: flex; }
-#drop div, .empty { border: 2px dashed var(--blue); border-radius: 18px; padding: 40px 54px; text-align: center; color: var(--text); }
-#drop div b, .empty b { font-size: 20px; display: block; margin-bottom: 6px; }
-.empty { margin: 30px auto; max-width: 560px; color: var(--muted); }
-.empty p { margin: 6px 0; font-size: 13px; }
+#drop div { border: 2px dashed var(--blue); border-radius: 18px; padding: 40px 54px; text-align: center; color: var(--text); }
+#drop div b { font-size: 20px; display: block; margin-bottom: 6px; }
 .toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: #2a1d1d; color: #ffb4b4;
   border: 1px solid #5c2a2a; padding: 8px 14px; border-radius: 10px; display: none; z-index: 60; max-width: 80vw; }
-@media (max-width: 900px) { main { grid-template-columns: 1fr; height: auto; } .col { overflow: visible; } #console { height: 50vh; } }
+#tip { position: fixed; z-index: 70; pointer-events: none; display: none; background: #1c2029; border: 1px solid #3a4152;
+  border-radius: 8px; padding: 6px 9px; font: 12px/1.45 var(--mono); color: var(--text); box-shadow: 0 6px 20px rgba(0,0,0,.5);
+  max-width: 280px; white-space: pre-line; }
+#tip .k { color: var(--muted); }
+
+@media (max-width: 900px) {
+  body { height: auto; min-height: 100%; }
+  main { grid-template-columns: 1fr; }
+  .col { display: contents; }
+  .card { order: 3; }
+  #boardcard { order: 1; }
+  .console-card { order: 2; }
+  #console { height: 50vh; }
+  .chipbox { max-width: 340px; }
+  .ro b { font-size: 14px; }
+}
 </style>
 </head>
 <body>
 <header>
   <div class="brand">ESP8266 emulator<small>unmodified firmware image · open ROM · no radio</small></div>
-  <div class="chip" id="imgchip" title="loaded image">image <b id="imgname">none</b><span id="imginfo"></span></div>
+  <div class="chip" id="imgchip" title="loaded image · click to load another">image <b id="imgname">none</b><span id="imginfo"></span></div>
   <select id="profile" title="GPIO display profile"></select>
   <div class="spacer"></div>
-  <span class="metric">t <b id="vt">-</b></span>
-  <span class="metric">speed <b id="ratio">-</b></span>
-  <span class="metric"><b id="mips">-</b> MIPS</span>
-  <span class="metric">boot <b id="bootn">-</b></span>
-  <span class="pill" id="stagepill">no image</span>
+  <div class="readouts">
+    <div class="ro" title="emulated time since the last reset"><small>emulated</small><b id="vt">-</b></div>
+    <div class="ro speed" title="emulated seconds per real second, measured by the emulator">
+      <div><small>speed</small><b id="ratio">-</b><svg class="spark" id="sparkRatio" viewBox="0 0 64 14"><polyline points=""/></svg></div>
+      <div class="spdgroup">
+        <button data-speed="1" class="spd small active" title="real time">1×</button>
+        <button data-speed="0.25" class="spd small" title="quarter speed">¼×</button>
+        <button data-speed="0" class="spd small" title="as fast as the host can">max</button>
+      </div>
+    </div>
+    <div class="ro" title="million guest instructions per host second"><small>MIPS</small><b id="mips">-</b><svg class="spark" id="sparkMips" viewBox="0 0 64 14"><polyline points=""/></svg></div>
+    <div class="ro" title="boot number since the image was loaded or the flash was erased"><small>boot</small><b id="bootn">-</b></div>
+    <span class="pill" id="stagepill">no image</span>
+  </div>
 </header>
 
 <main>
   <div class="col">
-    <section class="card">
-      <h2>GPIO panel <span class="right" id="devtitle"></span></h2>
-      <div class="device-wrap" id="device">
+    <section class="card" id="boardcard">
+      <h2>Board <span class="right">
+        <button id="btnReset" class="small" title="EXT_RST: RTC memory kept, reset reason 2">Reset</button>
+        <button id="btnPower" class="small" title="power cycle: RAM and RTC memory cleared, reason 1; flash kept">Power cycle</button>
+        <button id="btnErase" class="small" title="rewrite flash from the original image (fresh chip: config gone) and power up">Erase flash</button>
+      </span></h2>
+      <div class="board">
         <div class="empty" id="empty">
           <b>Drop firmware.bin here</b>
-          <p>Use a complete ESP8266 flash image starting at address 0x0.</p>
-          <p>An optional matching ELF enables Arduino setup() / loop() counters.</p>
-          <p><button id="pick">Choose files…</button></p>
+          <p>A complete ESP8266 flash image for address 0x0, with its ELF for setup() / loop() counts.</p>
+          <p><button id="pick" class="small">Choose files…</button></p>
         </div>
+        <div id="device"></div>
+        <div class="chipbox nofw" id="chipbox"><svg id="chip" viewBox="0 0 360 372" role="img" aria-label="ESP-12F module with live pin states"></svg></div>
+        <div class="chiplegend">pad <span class="hi">■</span> HIGH · ■ LOW · ◌ floating · <span class="drv">■</span> driven from outside ·
+          <code class="o">OUT</code> <code class="p">IN↑</code> pull-up <code class="z">IN~</code> floating <code class="u">FN</code> peripheral ·
+          click a pad: LOW → HIGH → release</div>
       </div>
     </section>
-    <section class="card">
-      <h2>Pins <span class="right">click an input to drive it</span></h2>
+    <section class="card" id="bootcard">
+      <h2>Boot <span class="right" id="bootinfo"></span></h2>
       <div class="body">
-        <div class="pins" id="pins"></div>
-        <div class="legend">level: <span style="color:var(--green)">●</span> high · ● low · ◌ floating ·
-          mode: <code style="color:var(--blue)">OUT</code> output, <code style="color:var(--green)">IN↑</code> input + pull-up,
-          <code style="color:var(--amber)">IN~</code> input, no pull-up, <code style="color:var(--violet)">FN</code> UART/other.
-          GPIO6–11 are the flash bus.</div>
-      </div>
-    </section>
-    <section class="card">
-      <h2>Firmware state</h2>
-      <div class="body">
-        <div class="stages" id="stages"></div>
-        <dl class="kv" id="kv"></dl>
+        <div class="timeline" id="timeline"></div>
+        <div class="hist" id="hist"></div>
+        <div class="tiles" id="tiles"></div>
         <div class="halt" id="halt"></div>
       </div>
+    </section>
+    <section class="card" id="sigcard">
+      <h2>Signals <span class="right">
+        <button data-win="100000" class="win small">100 ms</button>
+        <button data-win="1000000" class="win small active">1 s</button>
+        <button data-win="10000000" class="win small">10 s</button>
+        <button data-win="60000000" class="win small">1 min</button>
+      </span></h2>
+      <div class="body">
+        <div class="pinchips" id="pinchips"></div>
+        <canvas id="wave" height="0"></canvas>
+        <div class="sig-empty" id="sigempty">A pin appears here when its level changes. Click a GPIO above to show or hide it.</div>
+      </div>
+    </section>
+    <section class="card" id="netcard">
+      <h2>Network <span class="right">from the firmware's own UART messages</span></h2>
+      <div class="body badges" id="net"></div>
     </section>
   </div>
 
   <section class="card console-card">
     <h2>Serial console <span class="right"><span id="uartmeta">UART0</span> · known credential patterns masked</span></h2>
     <div class="console-tools">
-      <button id="btnReset" title="EXT_RST: RTC memory kept, reset reason 2">Reset</button>
-      <button id="btnPower" title="power cycle: RAM and RTC memory cleared, reason 1; flash kept">Power cycle</button>
-      <button id="btnErase" title="rewrite flash from the original image (fresh chip: config gone) and power up">Erase flash</button>
-      <span class="metric">speed</span>
-      <button data-speed="1" class="spd active">1×</button>
-      <button data-speed="0.25" class="spd">¼×</button>
-      <button data-speed="0" class="spd" title="as fast as the host can">max</button>
-      <div class="spacer"></div>
       <label title="UART bytes emitted while its TX pin is assigned to another function; these bytes are not on the physical TX wire"><input type="checkbox" id="offwire" checked> off-wire output</label>
       <label><input type="checkbox" id="emulog"> emulator log</label>
       <label><input type="checkbox" id="autoscroll" checked> follow</label>
-      <button id="btnClear">Clear</button>
+      <div class="spacer"></div>
+      <button id="btnClear" class="small">Clear</button>
     </div>
     <div id="console"></div>
     <div class="rxbar">
@@ -204,16 +285,21 @@ main { display: grid; grid-template-columns: minmax(360px, 460px) 1fr; gap: 14px
 <div id="drop"><div><b>Drop to flash and boot</b>firmware.bin (+ optional firmware.elf)</div></div>
 <input type="file" id="file" multiple accept=".bin,.elf" hidden>
 <div class="toast" id="toast"></div>
+<div id="tip"></div>
 
 <script>
 'use strict';
 const $ = id => document.getElementById(id);
 const S = { profile: null, pins: { lv: '', md: '' }, driven: {}, stat: null, statWall: 0, ratio: 1, image: null,
-  stages: [], fw: null, counts: Array(17).fill(0), relayHigh: localStorage.getItem('esp8266-relay-high') === '1',
-  press: null, lastEdgeT: 0 };
-const ROLE_FLASH = [6, 7, 8, 9, 10, 11];
+  stages: [], hist: [], fw: null, halt: null, counts: Array(17).fill(0), spark: { ratio: [], mips: [] },
+  relayHigh: localStorage.getItem('esp8266-relay-high') === '1', press: null, profileLocked: false };
+const FLASH_PINS = [6, 7, 8, 9, 10, 11];
+const MODE_NAME = { o: 'OUT', p: 'IN↑', z: 'IN~', u: 'FN' };
+const REASON = { 1: 'power on', 2: 'external reset', 3: 'software', 4: 'watchdog' };
+const REASON_SHORT = { 1: 'PWR', 2: 'RST', 3: 'SW', 4: 'WDT' };
 
 function toast(msg) { const t = $('toast'); t.textContent = msg; t.style.display = 'block'; clearTimeout(t._h); t._h = setTimeout(() => t.style.display = 'none', 6000); }
+function esc(s) { return s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 async function api(path, body, raw) {
   const r = await fetch(path, { method: 'POST', body: raw ? body : JSON.stringify(body),
     headers: raw ? { 'Content-Type': 'application/octet-stream' } : { 'Content-Type': 'application/json' } });
@@ -242,22 +328,53 @@ addEventListener('dragleave', e => { if (--dragDepth <= 0) { dragDepth = 0; $('d
 addEventListener('dragover', e => e.preventDefault());
 addEventListener('drop', e => { e.preventDefault(); dragDepth = 0; $('drop').classList.remove('show'); upload(e.dataTransfer.files); });
 $('file').onchange = e => { upload(e.target.files); e.target.value = ''; };
-document.addEventListener('click', e => { if (e.target.id === 'pick' || e.target.id === 'imgchip' || e.target.closest('#imgchip')) $('file').click(); });
+document.addEventListener('click', e => { if (e.target.id === 'pick' || e.target.closest('#imgchip')) $('file').click(); });
 
 // ---------------------------------------------------------------- emulated time
-function vtNow() {     // emulated microseconds since the emulator started, interpolated between stat events
+function tNow() {      // emulated microseconds since the emulator started, interpolated between stat events
   if (!S.stat) return 0;
-  return S.stat.t_us_total + (performance.now() - S.statWall) * 1000 * S.ratio;
+  return S.stat.t_us + (performance.now() - S.statWall) * 1000 * S.ratio;
 }
 function fmtT(us) { const s = us / 1e6; return s < 60 ? s.toFixed(2) + ' s' : Math.floor(s / 60) + 'm ' + (s % 60).toFixed(1) + 's'; }
+function fmtMs(ms) { return ms < 1 ? (ms * 1000).toFixed(0) + ' µs' : ms < 10 ? ms.toFixed(1) + ' ms' : ms < 1000 ? ms.toFixed(0) + ' ms' : (ms / 1000).toFixed(2) + ' s'; }
 
-// ---------------------------------------------------------------- device rendering
+// ---------------------------------------------------------------- tooltip (chip pads and the signal view)
+const tip = $('tip');
+function showTip(lines, x, y) {
+  tip.innerHTML = lines.map(l => Array.isArray(l) ? `<span class="k">${esc(l[0])}</span> ${esc(l[1])}` : esc(l)).join('\n');
+  tip.style.display = 'block';
+  const w = tip.offsetWidth, h = tip.offsetHeight;
+  tip.style.left = (x + 16 + w > innerWidth ? x - w - 8 : x + 16) + 'px';
+  tip.style.top = (y + 16 + h > innerHeight ? y - h - 8 : y + 16) + 'px';
+}
+function hideTip() { tip.style.display = 'none'; }
+const T = { pin: null, x: 0, y: 0 };      // the pad under the pointer, so its tooltip can follow level and edge changes
+function refreshTip() { if (T.pin != null) showTip(padTip(T.pin), T.x, T.y); }
+
+// ---------------------------------------------------------------- header readouts
+function spark(id, arr) {
+  const w = 64, h = 14, n = arr.length;
+  if (n < 2) { $(id).querySelector('polyline').setAttribute('points', ''); return; }
+  const max = Math.max(...arr, 1e-9);
+  const pts = arr.map((v, i) => `${(i / (n - 1) * w).toFixed(1)},${(h - 1.5 - v / max * (h - 3)).toFixed(1)}`);
+  $(id).querySelector('polyline').setAttribute('points', pts.join(' '));
+}
+function renderStat(e) {
+  const push = (a, v) => { a.push(v); if (a.length > 40) a.shift(); };
+  push(S.spark.ratio, e.ratio > 0 ? e.ratio : S.ratio);
+  push(S.spark.mips, e.mips);
+  spark('sparkRatio', S.spark.ratio); spark('sparkMips', S.spark.mips);
+  $('vt').textContent = fmtT(e.vt_us);
+  $('ratio').textContent = e.speed === 0 ? 'max · ' + S.ratio.toFixed(2) + '×' : S.ratio.toFixed(2) + '×';
+  $('mips').textContent = e.mips.toFixed(0); $('bootn').textContent = e.boot;
+  $('uartmeta').textContent = e.baud0 ? `UART0 ${e.baud0} baud` : 'UART0';
+}
+
+// ---------------------------------------------------------------- profile faceplate
 const lampSvg = '<svg class="lamp" viewBox="0 0 24 24"><path class="glass" d="M12 2a7 7 0 0 0-4 12.74V17a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-2.26A7 7 0 0 0 12 2z"/><path d="M9 20h6v1.2a.8.8 0 0 1-.8.8H9.8a.8.8 0 0 1-.8-.8z" fill="#8f949c"/></svg>';
 function renderDevice() {
   const P = S.profile, dev = $('device');
-  if (!S.image) return;
-  $('devtitle').textContent = P ? P.title : '';
-  if (!P || !P.gangs.length) { dev.innerHTML = '<div class="device-note">GPIO0–GPIO16 are shown below. Click an input to drive it LOW, HIGH, or release it.</div>'; return; }
+  if (!P || !P.gangs.length) { dev.innerHTML = ''; return; }
   const gangs = P.gangs.map((g, i) => `
     <div class="gang" id="gang${i}">
       <div class="lampwrap" id="lamp${i}">${lampSvg}</div>
@@ -269,9 +386,7 @@ function renderDevice() {
     <div class="hold" id="hold"></div>
     <div class="polarity">relay drawn ON when its pin is
       <button id="polLow">LOW</button><button id="polHigh">HIGH</button>
-      <span>· display polarity</span></div>
-    <div class="device-note">Hold a pad to drive its configured GPIO level. Releasing the pad releases the input;
-      the firmware decides how to respond.</div>`;
+      <span>· display only</span></div>`;
   P.gangs.forEach((g, i) => bindPad($('pad' + i), g.button, g.button_active_low ? 0 : 1));
   $('polHigh').onclick = () => { S.relayHigh = true; localStorage.setItem('esp8266-relay-high', '1'); renderLevels(); };
   $('polLow').onclick = () => { S.relayHigh = false; localStorage.setItem('esp8266-relay-high', '0'); renderLevels(); };
@@ -279,9 +394,9 @@ function renderDevice() {
 }
 function bindPad(el, pin, level) {
   const down = e => { e.preventDefault(); try { el.setPointerCapture(e.pointerId); } catch (_) {} if (S.press) return;
-    S.press = { pin, level, t0: null, wall: performance.now(), vt0: vtNow() }; el.classList.add('down'); cmd({ cmd: 'pin', pin, level }); };
+    S.press = { pin, level, t0: null, wall: performance.now(), vt0: tNow() }; el.classList.add('down'); cmd({ cmd: 'pin', pin, level }); };
   const up = () => { if (!S.press || S.press.pin !== pin) return; el.classList.remove('down'); cmd({ cmd: 'pin', pin, level: -1 });
-    const held = (S.press.t0 != null ? vtNow() - S.press.t0 : vtNow() - S.press.vt0) / 1e6; S.press = null;
+    const held = (S.press.t0 != null ? tNow() - S.press.t0 : tNow() - S.press.vt0) / 1e6; S.press = null;
     $('hold').textContent = held >= 0.05 ? `released after ${held.toFixed(2)} s emulated` : ''; };
   el.addEventListener('pointerdown', down);
   el.addEventListener('pointerup', up);
@@ -290,7 +405,7 @@ function bindPad(el, pin, level) {
 }
 function holdTick() {
   if (S.press) {
-    const t0 = S.press.t0 != null ? S.press.t0 : S.press.vt0, held = Math.max(0, (vtNow() - t0) / 1e6);
+    const t0 = S.press.t0 != null ? S.press.t0 : S.press.vt0, held = Math.max(0, (tNow() - t0) / 1e6);
     $('hold') && ($('hold').textContent = `GPIO${S.press.pin} held ${S.press.level ? 'HIGH' : 'LOW'} for ${held.toFixed(1)} s (emulated)`);
   }
 }
@@ -298,7 +413,7 @@ setInterval(holdTick, 100);     // a timer, not requestAnimationFrame: rAF stops
 
 function lv(p) { return S.pins.lv[p] === '1'; }
 function md(p) { return S.pins.md[p] || '?'; }
-function renderLevels() {
+function renderLevels() {       // the single entry point after a pins event: faceplate, then the module drawing
   const P = S.profile;
   if (P && P.gangs.length && $('pad0')) {
     P.gangs.forEach((g, i) => {
@@ -314,77 +429,233 @@ function renderLevels() {
     if (s) s.classList.toggle('on', md(P.status_led) === 'o' && (lv(P.status_led) !== P.status_led_active_low));
     if ($('polHigh')) { $('polHigh').classList.toggle('active', S.relayHigh); $('polLow').classList.toggle('active', !S.relayHigh); }
   }
-  renderPins();
+  renderChip();
 }
 
-// ---------------------------------------------------------------- pins
+// ---------------------------------------------------------------- module drawing (ESP-12F, antenna at the top)
+// Pads 1-8 run down the left edge, 9-14 along the bottom, 15-22 up the right edge (AI-Thinker ESP-12F datasheet).
+const LEFT = ['RST', 'ADC', 'EN', 16, 14, 12, 13, 'VCC'];
+const RIGHT = [1, 3, 5, 4, 0, 2, 15, 'GND'];      // top to bottom: TXD0, RXD0, GPIO5, GPIO4, GPIO0, GPIO2, GPIO15, GND
+const BOTTOM = [11, 7, 9, 10, 8, 6];              // left to right: CS0, MISO, GPIO9, GPIO10, MOSI, SCLK (the flash bus)
+const PAD_FN = { 1: 'TXD0', 3: 'RXD0', 11: 'CS0', 7: 'MISO', 8: 'MOSI', 6: 'SCLK' };
 function roleOf(p) {
   const P = S.profile, r = [];
   if (P) P.gangs.forEach((g, i) => { const n = P.gangs.length > 1 ? i + 1 : '';
     if (g.relay === p) r.push('relay' + n); if (g.led === p) r.push('led' + n); if (g.button === p) r.push('button' + n); });
   if (P && P.status_led === p && !r.some(x => x.startsWith('led'))) r.push('status led');
-  if (p === 1) r.push('U0TXD'); if (p === 3) r.push('U0RXD');
-  if (ROLE_FLASH.includes(p)) r.push('flash');
+  if (PAD_FN[p]) r.push(PAD_FN[p]);
+  if (FLASH_PINS.includes(p)) r.push('flash');
   return r.join(' · ');
 }
-function renderPins() {
-  const box = $('pins');
-  if (!box.children.length) for (let p = 0; p <= 16; p++) {
-    const d = document.createElement('div'); d.className = 'pin'; d.id = 'pin' + p;
-    d.innerHTML = `<div class="top"><span>GPIO${p}</span><span class="lv"></span></div><div class="role"></div><div class="md"></div>`;
-    d.onclick = () => clickPin(p); box.appendChild(d);
-  }
+function buildChip() {
+  const pad = (p, cx, cy, side) => {
+    const gpio = typeof p === 'number', flash = gpio && FLASH_PINS.includes(p), name = gpio ? 'GPIO' + p : p;
+    const cls = 'pad-g' + (gpio ? (flash ? ' flash' : '') : ' fixed');
+    const attrs = gpio ? ` id="pad-g${p}" data-pin="${p}"${flash ? '' : ' tabindex="0"'}` : '';
+    const rect = side === 'B' ? `<rect class="hit" x="${cx - 12}" y="${cy - 16}" width="24" height="32"/><rect class="pin" x="${cx - 8}" y="${cy - 14}" width="16" height="28" rx="3"/>`
+                             : `<rect class="hit" x="${cx - 16}" y="${cy - 12}" width="32" height="24"/><rect class="pin" x="${cx - 14}" y="${cy - 8}" width="28" height="16" rx="3"/>`;
+    let label;
+    if (side === 'B') label = `<text class="nm" transform="translate(${cx + 4} ${cy + 18}) rotate(90)">${name}${PAD_FN[p] ? ' · ' + PAD_FN[p] : ''}</text>`;
+    else {
+      const x = side === 'L' ? cx - 20 : cx + 20, anchor = side === 'L' ? 'end' : 'start';
+      label = `<text class="nm" x="${x}" y="${cy - 1}" text-anchor="${anchor}">${name}</text>` +
+              (gpio ? `<text class="fn" x="${x}" y="${cy + 9}" text-anchor="${anchor}"><tspan class="mode"></tspan><tspan class="role"></tspan></text>` : '');
+    }
+    return `<g class="${cls}"${attrs}>${rect}${label}</g>`;
+  };
+  let s = `<defs>
+    <pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="6" height="6" fill="#1a1d25"/><line x1="0" y1="0" x2="0" y2="6" stroke="#3a4152" stroke-width="2"/></pattern>
+    <linearGradient id="can" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#363d4c"/><stop offset="1" stop-color="#1f2430"/></linearGradient>
+  </defs>
+  <rect x="84" y="6" width="192" height="290" rx="6" fill="#0f1a26" stroke="#2a3d55"/>
+  <path d="M112 64V22h20v42h20V22h20v42h20V22h20v42h20V22h20v42h12" fill="none" stroke="#c9a35b" stroke-width="3" stroke-linejoin="round"/>
+  <rect x="104" y="80" width="152" height="190" rx="5" fill="url(#can)" stroke="#3b4354"/>
+  <text x="180" y="170" text-anchor="middle" font-size="13" font-weight="600" fill="#6b7488" font-family="system-ui, sans-serif">ESP-12F</text>
+  <text x="180" y="186" text-anchor="middle" font-size="9" fill="#4b5260" font-family="system-ui, sans-serif">ESP8266EX · 4 MB flash</text>`;
+  LEFT.forEach((p, i) => s += pad(p, 84, 86 + i * 24, 'L'));
+  RIGHT.forEach((p, i) => s += pad(p, 276, 86 + i * 24, 'R'));
+  BOTTOM.forEach((p, i) => s += pad(p, 120 + i * 24, 296, 'B'));
+  const svg = $('chip');
+  svg.innerHTML = s;
+  svg.querySelectorAll('.pad-g[data-pin]').forEach(g => {
+    const p = +g.dataset.pin;
+    g.onclick = () => clickPin(p);
+    g.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); clickPin(p); } };
+    g.onmouseenter = g.onmousemove = e => { T.pin = p; T.x = e.clientX; T.y = e.clientY; refreshTip(); };
+    g.onfocus = () => { const r = g.getBoundingClientRect(); T.pin = p; T.x = r.right; T.y = r.top; refreshTip(); };
+    g.onmouseleave = g.onblur = () => { T.pin = null; hideTip(); };
+  });
+}
+function padTip(p) {
+  const m = md(p), d = S.driven[p], role = roleOf(p);
+  const lines = [[`GPIO${p}`, role || ''], [MODE_NAME[m] || 'mode ?', m === 'z' && d === undefined ? 'floating' : lv(p) ? 'HIGH' : 'LOW'], [`${S.counts[p]}`, 'edges since load']];
+  if (FLASH_PINS.includes(p)) lines.push('flash bus: not drivable');
+  else if (d !== undefined) lines.push(`driven ${d ? 'HIGH' : 'LOW'} from outside · click → ${d ? 'release' : 'HIGH'}`);
+  else lines.push('click → drive LOW');
+  return lines;
+}
+function renderChip() {
   for (let p = 0; p <= 16; p++) {
-    const d = $('pin' + p), m = md(p), l = lv(p);
-    d.classList.toggle('flash', ROLE_FLASH.includes(p));
-    d.classList.toggle('input', m === 'p' || m === 'z');
-    d.classList.toggle('driven', S.driven[p] !== undefined);
-    const dot = d.querySelector('.lv');
-    dot.className = 'lv' + (m === 'z' && S.driven[p] === undefined ? ' z' : l ? ' hi' : '');
-    d.querySelector('.role').textContent = roleOf(p) || ' ';
-    const name = { o: 'OUT', p: 'IN↑', z: 'IN~', u: 'FN' }[m] || '?';
-    d.querySelector('.md').innerHTML = `<span class="${m}">${name}</span> ${m === 'z' && S.driven[p] === undefined ? 'floating' : l ? 'HIGH' : 'LOW'} · ${S.counts[p]} edges`;
-    d.title = S.driven[p] !== undefined ? `driven ${S.driven[p] ? 'HIGH' : 'LOW'} from outside (click to cycle)` : 'click to drive it LOW / HIGH / release';
+    const g = $('pad-g' + p), m = md(p), driven = S.driven[p] !== undefined, flash = FLASH_PINS.includes(p);
+    g.classList.toggle('driven', driven);
+    g.querySelector('.pin').setAttribute('class', 'pin ' + (flash ? '' : m === '?' ? 'unk' : m === 'z' && !driven ? 'z' : lv(p) ? 'hi' : 'lo'));
+    const mode = g.querySelector('.mode');
+    if (!mode) continue;
+    mode.setAttribute('class', 'mode ' + m);
+    mode.textContent = MODE_NAME[m] || '';
+    const role = roleOf(p).replace(' · flash', '');
+    g.querySelector('.role').textContent = role ? ' ' + role : '';
   }
+  if (S.image) $('chipbox').classList.remove('nofw');
+  refreshTip();
 }
 function clickPin(p) {
-  if (ROLE_FLASH.includes(p)) return;
+  if (FLASH_PINS.includes(p)) return;
   const cur = S.driven[p], next = cur === undefined ? 0 : cur === 0 ? 1 : undefined;
   if (next === undefined) delete S.driven[p]; else S.driven[p] = next;
   cmd({ cmd: 'pin', pin: p, level: next === undefined ? -1 : next });
-  renderPins();
+  renderChip();
 }
 
-// ---------------------------------------------------------------- firmware state
+// ---------------------------------------------------------------- boot: stages, reset history, readouts
 const STAGES = ['rom', 'eboot', 'app', 'sdk', 'setup', 'loop'];
-const STAGE_LABEL = { rom: 'ROM loader', eboot: 'eboot', app: 'app entry', sdk: 'SDK main loop', setup: 'setup()', loop: 'loop()', halted: 'halted' };
-const REASON = { 1: 'power on', 2: 'external reset', 3: 'software', 4: 'watchdog' };
-function renderState() {
+const STAGE_LABEL = { rom: 'ROM', eboot: 'eboot', app: 'app', sdk: 'SDK', setup: 'setup()', loop: 'loop()', halted: 'halted' };
+const STAGE_HELP = { rom: 'ROM loader: banner printed, image loading', eboot: 'entry point in the bootloader area (Arduino eboot)', app: 'application code started',
+  sdk: 'SDK task loop running', setup: 'first setup() call (needs the ELF)', loop: 'first loop() call (needs the ELF)' };
+function renderBoot() {
   const st = S.stages, cur = st.length ? st[st.length - 1] : null, boot = cur ? cur.boot : 0;
   const thisBoot = st.filter(s => s.boot === boot);
-  const seen = new Set(thisBoot.map(s => s.s));
-  $('stages').innerHTML = STAGES.map(s => {
-    const hit = thisBoot.find(x => x.s === s);
-    return `<span class="stage ${seen.has(s) ? 'done' : ''} ${cur && cur.s === s ? 'cur' : ''}" title="${hit ? (hit.vt_us / 1000).toFixed(1) + ' ms after reset' : ''}">${STAGE_LABEL[s]}${hit && hit.vt_us > 0 ? ' ' + (hit.vt_us / 1000).toFixed(0) + 'ms' : ''}</span>`;
+  $('timeline').innerHTML = STAGES.map(s => {
+    const hit = thisBoot.find(x => x.s === s), ms = hit ? hit.vt_us / 1000 : null;
+    return `<div class="step ${hit ? 'done' : ''} ${cur && cur.s === s ? 'cur' : ''}" title="${STAGE_HELP[s]}${ms != null ? ' · ' + ms.toFixed(3) + ' ms after reset' : ''}"><div class="dot"></div>${STAGE_LABEL[s]}<span class="ms">${ms != null ? fmtMs(ms) : '·'}</span></div>`;
   }).join('');
+  $('bootinfo').textContent = cur ? `boot ${boot} · ${REASON[cur.reason] || 'reason ' + cur.reason}` : '';
+  const shown = S.hist.slice(-12);
+  $('hist').innerHTML = (S.hist.length > shown.length ? `<span>+${S.hist.length - shown.length}</span>` : '') +
+    shown.map(h => `<span class="b r${h.reason} ${h.boot === boot ? 'cur' : ''}" title="boot ${h.boot}: ${REASON[h.reason] || h.reason} at ${fmtT(h.t_us)} emulated">${h.boot} ${REASON_SHORT[h.reason] || '?'}</span>`).join('');
   const pill = $('stagepill'), s = S.halt ? 'halted' : cur ? cur.s : (S.image ? 'starting' : 'no image');
-  pill.textContent = S.halt ? 'halted' : cur ? STAGE_LABEL[cur.s] || cur.s : s;
+  pill.textContent = S.halt ? 'halted' : cur ? ({ rom: 'ROM loader', eboot: 'eboot', app: 'app entry', sdk: 'SDK main loop', setup: 'setup()', loop: 'loop()' }[cur.s] || cur.s) : s;
   pill.className = 'pill ' + (S.halt ? 'halted' : s === 'loop' ? 'loop' : cur ? 'boot' : '');
-  const fw = S.fw || {}, stt = S.stat || {};
-  const rows = [
-    ['reset reason', cur ? `${REASON[cur.reason] || cur.reason} (boot ${boot})` : '-'],
-    ['loop()', stt.loop_calls ? `${stt.loop_calls.toLocaleString()} calls this boot` : (stt.loop_task ? `${stt.loop_task.toLocaleString()} loop-task runs (drop the .elf for exact loop() counts)` : '-')],
-    ['soft AP', fw.softap == null ? '-' : fw.softap ? `up ${fw.ap_mac || ''} ${fw.ap_ip || ''}` : 'down' + (fw.ap_note ? ' · ' + fw.ap_note : '')],
-    ['station', `${fw.sta || '-'}${fw.sta_mac ? ' · ' + fw.sta_mac : ''}`],
-    ['Wi-Fi scans', fw.scans != null ? fw.scans : '-'],
-    ['Host network', fw.network || '-'],
-    ['UART0', stt.baud0 ? `${stt.baud0} baud · ${(stt.uart0_bytes || 0).toLocaleString()} bytes sent` : '-'],
-    ['CPU', stt.cpu_mhz ? stt.cpu_mhz + ' MHz' : '-'],
+  const stt = S.stat || {};
+  const tiles = [
+    ['loop()', stt.loop_calls ? stt.loop_calls.toLocaleString() : stt.loop_task ? stt.loop_task.toLocaleString() : '-',
+      stt.loop_calls ? 'calls this boot' : stt.loop_task ? 'loop-task runs · no ELF' : ''],
+    ['UART0', stt.baud0 ? stt.baud0 + ' baud' : '-', stt.baud0 ? (stt.uart0_bytes || 0).toLocaleString() + ' bytes sent' : ''],
+    ['CPU', stt.cpu_mhz ? stt.cpu_mhz + ' MHz' : '-', stt.insn ? (stt.insn / 1e6).toFixed(0) + ' M instructions' : ''],
   ];
-  $('kv').innerHTML = rows.map(([k, v]) => `<dt>${k}</dt><dd>${esc(String(v))}</dd>`).join('');
+  $('tiles').innerHTML = tiles.map(([k, v, n]) => `<div class="tile"><small>${k}</small><b>${esc(String(v))}</b><span>${esc(n)}</span></div>`).join('');
   const h = $('halt'); h.style.display = S.halt ? 'block' : 'none'; if (S.halt) h.textContent = 'Halted: ' + S.halt;
 }
-function esc(s) { return s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+
+// ---------------------------------------------------------------- signals: recent pin edges as a logic-analyzer view
+// Every edge arrives timestamped in emulated microseconds (t_us, monotonic across resets): [t, pin, level, mode].
+const HUES = ['#5aa8ff', '#39d98a', '#ffb547', '#b18cff', '#4fd1e0', '#ff7ab6', '#ff8c42', '#b5e853', '#f7d96b', '#7fd8b0', '#d49cff'];
+const hue = p => FLASH_PINS.includes(p) ? '#6b7280' : HUES[p < 6 ? p : p - 6];
+const W = { edges: [], last: [], show: new Set(), auto: 0, win: 1e6, boots: [], hover: null };
+const WAVE_PINS = [...Array(17).keys()].filter(p => !FLASH_PINS.includes(p));   // the flash bus never toggles
+function resetWave() { W.edges = Array.from({ length: 17 }, () => []); W.last = Array(17).fill(null); W.show.clear(); W.auto = 0; W.boots = []; renderPinChips(); }
+function feedEdges(list) {
+  for (const [t, p, l, m] of list) {
+    const a = W.edges[p]; a.push([t, l, m]);
+    if (a.length > 6000) a.splice(0, a.length - 6000);
+    const prev = W.last[p]; W.last[p] = [t, l, m];
+    // show a pin on its first level change (mode changes at boot touch every pin), never the flash bus, at most six automatically
+    if (!W.show.has(p) && W.auto < 6 && prev && prev[1] !== l && !FLASH_PINS.includes(p)) { W.show.add(p); W.auto++; renderPinChips(); }
+  }
+}
+function renderPinChips() {
+  const box = $('pinchips');
+  if (!box.children.length) for (const p of WAVE_PINS) {
+    const b = document.createElement('button'); b.className = 'pc'; b.id = 'pc' + p; b.style.setProperty('--c', hue(p));
+    b.innerHTML = `GPIO${p} <span class="n">0</span>`; b.title = 'show or hide this pin · the number is its edge count';
+    b.onclick = () => { if (W.show.has(p)) W.show.delete(p); else W.show.add(p); renderPinChips(); };
+    box.appendChild(b);
+  }
+  for (const p of WAVE_PINS) $('pc' + p).classList.toggle('on', W.show.has(p));
+}
+function levelAt(a, t) {        // index of the last edge at or before t, or -1
+  let lo = 0, hi = a.length;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (a[mid][0] <= t) lo = mid + 1; else hi = mid; }
+  return lo - 1;
+}
+const wave = $('wave'), wctx = wave.getContext('2d');
+function drawWave() {
+  if (document.hidden) return;
+  for (const p of WAVE_PINS) $('pc' + p).querySelector('.n').textContent = S.counts[p];
+  refreshTip();
+  const pins = [...W.show].sort((a, b) => a - b);
+  $('sigempty').style.display = pins.length ? 'none' : 'block';
+  wave.style.display = pins.length ? 'block' : 'none';
+  if (!pins.length) return;
+  const TR = 26, AX = 18, LBL = 54, cssW = wave.clientWidth || 300, cssH = pins.length * TR + AX, dpr = devicePixelRatio || 1;
+  if (wave.width !== Math.round(cssW * dpr) || wave.height !== Math.round(cssH * dpr)) {
+    wave.width = Math.round(cssW * dpr); wave.height = Math.round(cssH * dpr); wave.style.height = cssH + 'px';
+  }
+  wctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  wctx.clearRect(0, 0, cssW, cssH);
+  let now = tNow();
+  for (const l of W.last) if (l && l[0] > now) now = l[0];
+  const t0 = now - W.win, px = (cssW - LBL - 4) / W.win, X = t => LBL + (t - t0) * px;
+  wctx.font = '10px ' + getComputedStyle(document.body).getPropertyValue('--mono');
+  wctx.textBaseline = 'middle';
+  // time axis: four divisions, labelled relative to now
+  for (let i = 0; i <= 4; i++) {
+    const t = t0 + W.win * i / 4, x = X(t);
+    wctx.strokeStyle = '#1b1f28'; wctx.lineWidth = 1;
+    wctx.beginPath(); wctx.moveTo(x, 0); wctx.lineTo(x, cssH - AX); wctx.stroke();
+    wctx.fillStyle = '#5d6576'; wctx.textAlign = i === 4 ? 'right' : i === 0 ? 'left' : 'center';
+    const back = now - t;
+    wctx.fillText(i === 4 ? 'now' : '-' + (W.win <= 1e6 ? (back / 1000).toFixed(0) + ' ms' : (back / 1e6).toFixed(W.win >= 6e7 ? 0 : 1) + ' s'), x, cssH - AX / 2);
+  }
+  for (const b of W.boots) if (b.t >= t0 && b.t <= now) {           // reboots
+    const x = X(b.t);
+    wctx.strokeStyle = 'rgba(90,168,255,.55)'; wctx.beginPath(); wctx.moveTo(x, 0); wctx.lineTo(x, cssH - AX); wctx.stroke();
+    wctx.fillStyle = '#5aa8ff'; wctx.textAlign = 'left'; wctx.fillText('boot ' + b.boot, x + 3, 7);
+  }
+  pins.forEach((p, i) => {
+    const y0 = i * TR, yH = y0 + 5, yL = y0 + TR - 6, Y = l => l ? yH : yL, a = W.edges[p];
+    wctx.fillStyle = hue(p); wctx.textAlign = 'left'; wctx.font = '600 11px ' + getComputedStyle(document.body).getPropertyValue('--mono');
+    wctx.fillText('GPIO' + p, 4, y0 + TR / 2);
+    wctx.font = '10px ' + getComputedStyle(document.body).getPropertyValue('--mono');
+    let j = levelAt(a, t0), l, tStart = t0;
+    if (j < 0) { if (!a.length || a[0][0] > now) return; j = 0; l = a[0][1]; tStart = a[0][0]; } else l = a[j][1];
+    wctx.strokeStyle = hue(p); wctx.lineWidth = 1.5; wctx.lineJoin = 'round';
+    wctx.beginPath(); wctx.moveTo(X(tStart), Y(l));
+    for (j++; j < a.length && a[j][0] <= now; j++) { const x = X(a[j][0]); wctx.lineTo(x, Y(l)); l = a[j][1]; wctx.lineTo(x, Y(l)); }
+    wctx.lineTo(X(now), Y(l)); wctx.stroke();
+  });
+  if (W.hover) {                                                      // crosshair with the level of every shown pin
+    const t = t0 + (W.hover.x - LBL) / px;
+    if (t >= t0 && t <= now) {
+      wctx.strokeStyle = 'rgba(221,226,234,.5)'; wctx.lineWidth = 1;
+      wctx.beginPath(); wctx.moveTo(W.hover.x, 0); wctx.lineTo(W.hover.x, cssH - AX); wctx.stroke();
+      const lines = [[`t`, '-' + ((now - t) / 1e6).toFixed(W.win <= 1e6 ? 4 : 2) + ' s · ' + fmtT(t) + ' total']];
+      for (const p of pins) { const j = levelAt(W.edges[p], t); lines.push([`GPIO${p}`, j < 0 ? '?' : (W.edges[p][j][1] ? 'HIGH' : 'LOW') + (W.edges[p][j][2] === 'u' ? ' (FN)' : '')]); }
+      showTip(lines, W.hover.cx, W.hover.cy);
+    } else hideTip();
+  }
+}
+wave.onmousemove = e => { W.hover = { x: e.offsetX, cx: e.clientX, cy: e.clientY }; };
+wave.onmouseleave = () => { W.hover = null; hideTip(); };
+document.querySelectorAll('.win').forEach(b => b.onclick = () => {
+  document.querySelectorAll('.win').forEach(x => x.classList.remove('active')); b.classList.add('active'); W.win = +b.dataset.win;
+});
+setInterval(drawWave, 50);
+
+// ---------------------------------------------------------------- network badges (today: what the SDK prints on the UART)
+function renderNet() {
+  const fw = S.fw || {}, b = [];
+  const badge = (cls, label, val, title) => `<span class="badge ${cls}" title="${esc(title || '')}"><i></i>${esc(label)} <b>${esc(String(val))}</b></span>`;
+  b.push(badge(fw.softap == null ? '' : fw.softap ? 'up' : 'down', 'soft AP',
+    fw.softap == null ? '-' : fw.softap ? (fw.ap_ip || 'up') : 'down' + (fw.ap_note ? ' · ' + fw.ap_note : ''), fw.ap_mac ? 'AP MAC ' + fw.ap_mac : ''));
+  const sta = fw.sta || '-';
+  b.push(badge(/^(got IP|connected)/.test(sta) ? 'up' : sta === 'idle' || sta === '-' ? '' : 'busy', 'station', sta, fw.sta_mac ? 'station MAC ' + fw.sta_mac : ''));
+  b.push(badge(fw.scans ? 'busy' : '', 'scans', fw.scans != null ? fw.scans : '-', 'Wi-Fi scans this boot, from the SDK\'s scandone messages'));
+  const net = fw.network;    // a string today; a host network bridge may report an object, shown one badge per field
+  if (net && typeof net === 'object') for (const [k, v] of Object.entries(net)) b.push(badge(v === true || /^(up|connected|on)/i.test(String(v)) ? 'up' : v === false ? 'down' : '', k, v, ''));
+  else b.push(badge(net && !/^unavailable/.test(net) ? 'up' : '', 'host network', net || '-', 'bridge from the emulated station to the host network'));
+  $('net').innerHTML = b.join('');
+}
 
 // ---------------------------------------------------------------- console
 const con = $('console');
@@ -426,7 +697,7 @@ $('profile').onchange = () => {
   if (S.press) { cmd({ cmd: 'pin', pin: S.press.pin, level: -1 }); S.press = null; }
   S.profileLocked = true; cmd({ cmd: 'profile', name: $('profile').value });
 };
-fetch('/api/state').then(r => r.json()).then(j => { $('profile').innerHTML = j.profiles.map(p => `<option>${p}</option>`).join(''); if (S.profile) $('profile').value = S.profile.name; });
+fetch('/api/state').then(r => r.json()).then(j => { $('profile').innerHTML = j.profiles.map(p => `<option>${esc(p)}</option>`).join(''); if (S.profile) $('profile').value = S.profile.name; });
 
 // ---------------------------------------------------------------- event stream
 function onEvent(e) {
@@ -434,47 +705,52 @@ function onEvent(e) {
     case 'image':
       S.image = e; $('imgname').textContent = e.name;
       $('imginfo').textContent = ` ${(e.size / 1024).toFixed(0)} KB · ${e.sha.slice(0, 8)} · flash ${e.flash_size / 1048576} MB${e.has_elf ? ' · +elf' : ''}${e.flash_persisted ? ' · saved flash' : ''}`;
+      $('empty').style.display = 'none'; $('chipbox').classList.remove('nofw');
       break;
     case 'profile': S.profile = e; $('profile').value = e.name; renderDevice(); break;
-    case 'clear': con.innerHTML = ''; lineEl = null; S.counts = Array(17).fill(0); S.halt = null; S.stages = []; S.driven = {}; break;
+    case 'clear':      // a (re)started emulator process: everything below belongs to the previous one
+      con.innerHTML = ''; lineEl = null; S.counts = Array(17).fill(0); S.halt = null; S.stages = []; S.hist = []; S.driven = {};
+      S.spark = { ratio: [], mips: [] }; resetWave(); renderChip(); renderBoot(); break;
     case 'backlog': e.lines.forEach(consoleEv); break;
     case 'console': consoleEv(e); break;
     case 'pins': S.pins = e; renderLevels(); break;
     case 'edges':
       if (e.counts) S.counts = e.counts;
       for (const [t, p, l] of e.e) if (S.press && p === S.press.pin && l === S.press.level && S.press.t0 == null) S.press.t0 = t;
+      feedEdges(e.e);
       break;
-    case 'stages':
-      S.stages = e.list; const last = e.list[e.list.length - 1];
+    case 'stages': {
+      S.stages = e.list;
+      for (const s of e.list) if (s.s === 'rom' && !S.hist.some(h => h.boot === s.boot)) { S.hist.push({ boot: s.boot, reason: s.reason, t_us: s.t_us }); W.boots.push({ t: s.t_us, boot: s.boot }); }
+      if (W.boots.length > 50) W.boots.splice(0, W.boots.length - 50);
+      const last = e.list[e.list.length - 1];
       if (last && last.s === 'rom') {
         S.halt = null;
-        if (last.reason === 1) { S.driven = {}; renderPins(); }     // power-on releases every external drive
+        if (last.reason === 1) { S.driven = {}; renderChip(); }     // power-on releases every external drive
         if (e.list.length > 1) conAppend(`\n──── boot ${last.boot}: ${REASON[last.reason] || 'reset'} ────\n`, 'sep');
       }
-      renderState(); break;
-    case 'stat': {
-      const now = performance.now();
-      e.t_us_total = e.t_us;
-      if (e.ratio > 0) S.ratio = S.ratio * 0.5 + e.ratio * 0.5;     // measured by the emulator itself
-      S.stat = e; S.statWall = now;
-      $('vt').textContent = fmtT(e.vt_us); $('ratio').textContent = e.speed === 0 ? 'max · ' + S.ratio.toFixed(2) + '×' : S.ratio.toFixed(2) + '×';
-      $('mips').textContent = e.mips.toFixed(0); $('bootn').textContent = e.boot;
-      $('uartmeta').textContent = e.baud0 ? `UART0 ${e.baud0} baud` : 'UART0';
-      renderState(); break;
+      renderBoot(); break;
     }
-    case 'fw': S.fw = e; renderState(); break;
-    case 'halt': S.halt = e.m; renderState(); emuLine('HALT: ' + e.m); break;
+    case 'stat':
+      if (e.ratio > 0) S.ratio = S.ratio * 0.5 + e.ratio * 0.5;     // measured by the emulator itself
+      S.stat = e; S.statWall = performance.now();
+      renderStat(e); renderBoot(); break;
+    case 'fw': S.fw = e; renderNet(); break;
+    case 'halt': S.halt = e.m; renderBoot(); emuLine('HALT: ' + e.m); break;
     case 'log': emuLine(e.m); break;
     case 'stopped': $('stagepill').textContent = 'stopped'; break;
   }
-  if (S.image) $('empty') && ($('empty').style.display = 'none');
 }
 function connect() {
   const es = new EventSource('/events');
   es.onmessage = m => onEvent(JSON.parse(m.data));
   es.onerror = () => { $('stagepill').textContent = 'disconnected'; $('stagepill').className = 'pill halted'; };
 }
-renderPins();
+buildChip();
+resetWave();
+renderChip();
+renderBoot();
+renderNet();
 connect();
 </script>
 </body>

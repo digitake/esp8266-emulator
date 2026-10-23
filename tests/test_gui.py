@@ -340,5 +340,12 @@ class GuiTests(unittest.TestCase):
         self.assertFalse(reader.is_alive())
         self.assertEqual(self.hub.snap['pins']['lv'],'current')
 
+    def test_page_is_self_contained(self):
+        # The page must work offline: no CDN scripts, fonts, stylesheets or remote images.
+        page = (CHIP / 'gui/index.html').read_text(encoding='utf-8')
+        self.assertNotRegex(page, r'''(src|href)=["']?(https?:)?//''')
+        self.assertNotRegex(page, r'''@import|url\(\s*["']?(https?:)?//''')
+        self.assertNotIn('<link', page)
+
 if __name__=='__main__':
     unittest.main()
