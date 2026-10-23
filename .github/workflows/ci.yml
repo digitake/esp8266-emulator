@@ -44,7 +44,12 @@ jobs:
       - name: Build with Apple clang
         run: make -j3
       - name: Sanitizers, Python tests and synthetic watchdog
-        run: make -j3 check
+        # Logs need a sign-in; an annotation with the end of a failing run shows on the public run page.
+        run: |
+          make check > check.log 2>&1 && exit 0
+          tail -n 60 check.log
+          python3 -c "import sys; t = sys.stdin.read()[-3500:]; print('::error title=make check failed::' + t.replace('%', '%25').replace('\r', '').replace('\n', '%0A'))" < check.log
+          exit 1
       - name: Network runner with Homebrew libslirp
         run: |
           brew install libslirp pkg-config
