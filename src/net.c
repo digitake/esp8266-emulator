@@ -213,7 +213,11 @@ bool net_hook(uint32_t pc) {
         n.dhcp = true;
         return return_value(1);
     case S_DHCPC_STOP:
-        if (n.connected && n.dhcp) n.start = true;
+        if (n.dhcp) {
+            // Stopping the client retains its lease until the application
+            // explicitly changes the address. Keep it for a later static link.
+            n.static_ip = n.ip; n.static_mask = n.mask; n.static_gw = n.gw;
+        }
         n.dhcp = false;
         return return_value(1);
     case S_DHCPC_STATUS: return return_value(n.dhcp ? 1 : 0);
@@ -251,6 +255,10 @@ void net_service_guest(void) {
     if (symbols[S_MODE_GET] && !n.mode_return_count && (n.mode_check || n.start)) {
         n.mode_check = false;
         if (!(call(S_MODE_GET, 0, NULL) & 1u)) disconnect();
+    }
+    if (n.dhcp_running && !n.dhcp) {
+        call(S_DHCP_STOP, 1, &zero);
+        n.dhcp_running = false;
     }
     if (n.stop) {
         n.stop = false;
