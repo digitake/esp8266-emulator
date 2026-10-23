@@ -11,9 +11,9 @@
 #include "net_profile.h"
 #include "host_net.h"
 
-enum symbol { S_TX, S_RX_ALLOC, S_RX_INPUT, S_FREE, S_UPDATE, S_UPDOWN, S_DHCP_START, S_DHCP_STOP, S_IFUPDOWN, S_LWIP_INIT, S_CONNECT, S_DISCONNECT, S_STATUS, S_IP_GET, S_IP_SET, S_EVENT_CB, S_DHCPC_START, S_DHCPC_STOP, S_DHCPC_STATUS, S_RSSI, S_MAC_GET, S_CONFIG_GET, S_CONFIG_SET, S_CONFIG_CURRENT, S_CHANNEL, S_COUNT };
+enum symbol { S_TX, S_RX_ALLOC, S_RX_INPUT, S_FREE, S_UPDATE, S_UPDOWN, S_DHCP_START, S_DHCP_STOP, S_IFUPDOWN, S_LWIP_INIT, S_CONNECT, S_DISCONNECT, S_STATUS, S_IP_GET, S_IP_SET, S_EVENT_CB, S_DHCPC_START, S_DHCPC_STOP, S_DHCPC_STATUS, S_RSSI, S_MAC_GET, S_CONFIG_GET, S_CONFIG_SET, S_CONFIG_CURRENT, S_CHANNEL, S_MODE_SET, S_MODE_CURRENT, S_MODE_GET, S_COUNT };
 static const char *const names[S_COUNT] = {
- "glue2esp_linkoutput", "esp2glue_alloc_for_recv", "esp2glue_ethernet_input", "esp2glue_pbuf_freed", "esp2glue_netif_update", "esp2glue_netif_set_up1down0", "esp2glue_dhcp_start", "esp2glue_dhcp_stop", "glue2esp_ifupdown", "esp2glue_lwip_init", "wifi_station_connect", "wifi_station_disconnect", "wifi_station_get_connect_status", "wifi_get_ip_info", "wifi_set_ip_info", "wifi_set_event_handler_cb", "wifi_station_dhcpc_start", "wifi_station_dhcpc_stop", "wifi_station_dhcpc_status", "wifi_station_get_rssi", "wifi_get_macaddr", "wifi_station_get_config", "wifi_station_set_config", "wifi_station_set_config_current", "wifi_get_channel"
+ "glue2esp_linkoutput", "esp2glue_alloc_for_recv", "esp2glue_ethernet_input", "esp2glue_pbuf_freed", "esp2glue_netif_update", "esp2glue_netif_set_up1down0", "esp2glue_dhcp_start", "esp2glue_dhcp_stop", "glue2esp_ifupdown", "esp2glue_lwip_init", "wifi_station_connect", "wifi_station_disconnect", "wifi_station_get_connect_status", "wifi_get_ip_info", "wifi_set_ip_info", "wifi_set_event_handler_cb", "wifi_station_dhcpc_start", "wifi_station_dhcpc_stop", "wifi_station_dhcpc_status", "wifi_station_get_rssi", "wifi_get_macaddr", "wifi_station_get_config", "wifi_station_set_config", "wifi_station_set_config_current", "wifi_get_channel", "wifi_set_opmode", "wifi_set_opmode_current", "wifi_get_opmode"
 };
 static uint32_t symbols[S_COUNT];
 static bool ram(uint32_t a, uint32_t size) { return a >= DRAM_BASE && size <= DRAM_SIZE && a - DRAM_BASE <= DRAM_SIZE - size; }
@@ -21,6 +21,8 @@ emu_t E;
 cpu_t C;
 static uint8_t memory[DRAM_SIZE];
 static unsigned sends, frees, inputs, events_seen, updates;
+static unsigned backend_resets, mode_reads, dhcp_stops, link_downs, address_clears, last_event;
+static uint32_t sdk_mode = 1;
 static bool fail_send, fail_alloc;
 static uint64_t backend_generation;
 static bool expect_halt;
@@ -34,21 +36,59 @@ void emu_halt(const char *f,...) {(void)f;if(expect_halt)longjmp(halt_return,1);
 static bool send_packet(void *ctx,const uint8_t *f,size_t size) {
  (void)ctx; assert(size==60 && f[0]==0xAA); if(fail_send)return false; sends++;return true;
 }
-static void reset_backend(void *ctx,uint64_t gen) {(void)ctx;backend_generation=gen;}
+static void reset_backend(void *ctx,uint64_t gen) {(void)ctx;backend_generation=gen;backend_resets++;}
 net_backend_t host_net_backend(void) { return (net_backend_t){.send=send_packet,.reset=reset_backend}; }
 uint32_t guest_call(uint32_t fn,int argc,const uint32_t *a) {
  if(fn==symbols[S_MAC_GET]) {uint8_t mac[6]={2,3,4,5,6,7}; assert(argc==2);hle_write(a[1],mac,6);return 1;}
  if(fn==symbols[S_CONFIG_GET]) {uint8_t config[112]={0};memcpy(config,"test",4);hle_write(a[0],config,112);return 1;}
- if(fn==symbols[S_UPDATE]) {assert(argc==7 && a[6]==1500);updates++;return 0;}
+ if(fn==symbols[S_UPDATE]) {assert(argc==7 && a[6]==1500);updates++;if(!a[1] && !a[4])address_clears++;return 0;}
+ if(fn==symbols[S_MODE_GET]) {assert(argc==0);mode_reads++;return sdk_mode;}
+ if(fn==symbols[S_DHCP_STOP]) {dhcp_stops++;return 0;}
+ if(fn==symbols[S_UPDOWN]) {if(!a[1])link_downs++;return 0;}
  if(fn==symbols[S_FREE]) {assert(a[0]==DRAM_BASE+512);frees++;return 0;}
  if(fn==symbols[S_RX_ALLOC]) {if(!fail_alloc){hle_wr32(a[1],DRAM_BASE+1024);hle_wr32(a[2],DRAM_BASE+1100);}return 0;}
  if(fn==symbols[S_RX_INPUT]) {assert(a[0]==0 && a[1]==DRAM_BASE+1024);inputs++;return 0;}
- if(fn==0x402ffff0) {events_seen++;return 0;}
+ if(fn==0x402ffff0) {events_seen++;last_event=hle_rd32(a[0]);return 0;}
  return 0;
 }
 static uint32_t hook(enum symbol s,uint32_t a,uint32_t b,uint32_t c,uint32_t d) {
  C.a[0]=0x402ff000;C.a[2]=a;C.a[3]=b;C.a[4]=c;C.a[5]=d;
  assert(net_hook(symbols[s]));assert(C.pc==C.a[0]);return C.a[2];
+}
+static void mode_begin(enum symbol s,uint32_t requested,uint32_t return_pc) {
+ C.a[0]=return_pc;C.a[2]=requested;
+ assert(!net_hook(symbols[s])); // SDK setter body must execute unchanged
+}
+static void mode_lifecycle(void) {
+ net_reset(3);sdk_mode=1;assert(!net_hook(symbols[S_LWIP_INIT]));
+ hook(S_EVENT_CB,0x402ffff0,0,0,0);hook(S_CONNECT,0,0,0,0);net_service_guest();
+ hook(S_IFUPDOWN,0,0x0f02000a,0x00ffffff,0x0202000a);net_service_guest();
+ assert(net_get_stats().connected && net_get_stats().ip==0x0f02000a);
+ const uint32_t ret=0x402ef000;uint32_t sp=C.a[1];
+ unsigned reads=mode_reads,resets=backend_resets;
+ mode_begin(S_MODE_SET,0,ret);sdk_mode=0;
+ net_service_guest();assert(mode_reads==reads && net_get_stats().connected);
+ // Visiting the same code from a different stack does not finish the setter.
+ C.a[1]=sp-16;assert(!net_hook(ret));net_service_guest();assert(mode_reads==reads);C.a[1]=sp;
+ // The setter failed and restored its old mode: requested OFF is not evidence.
+ sdk_mode=1;C.a[2]=0;assert(!net_hook(ret));net_service_guest();
+ assert(mode_reads==reads+1 && net_get_stats().connected && backend_resets==resets);
+ uint8_t frame[60];memset(frame,0xaa,sizeof frame);hle_write(DRAM_BASE+2048,frame,60);
+ assert(hook(S_TX,0,DRAM_BASE+512,DRAM_BASE+2048,60)==0);assert(net_receive(3,frame,60));
+ unsigned old_frees=frees,old_inputs=inputs,stops=dhcp_stops,downs=link_downs,clears=address_clears;
+ mode_begin(S_MODE_CURRENT,2,ret+16);sdk_mode=2;C.a[2]=1;assert(!net_hook(ret+16));net_service_guest();
+ net_stats_t state=net_get_stats();assert(!state.connected && !state.ip && !state.rx_pending && !state.tx_pending);
+ assert(frees==old_frees+1 && inputs==old_inputs && backend_resets==resets+1);
+ assert(dhcp_stops==stops+1 && link_downs==downs+1 && address_clears==clears+1 && last_event==1);
+ // An explicit connect cannot claim a station connection in AP-only/OFF mode.
+ hook(S_CONNECT,0,0,0,0);net_service_guest();assert(!net_get_stats().connected);
+ assert(backend_resets==resets+1);
+ // A wake-like mode restore still waits for the real setter's completion.
+ mode_begin(S_MODE_SET,3,ret+32);sdk_mode=3;hook(S_CONNECT,0,0,0,0);net_service_guest();assert(!net_get_stats().connected);
+ assert(!net_hook(ret+32));net_service_guest();assert(net_get_stats().connected && !net_get_stats().ip && last_event==0);
+ // Reset invalidates any pending return observer rather than blocking the new boot.
+ mode_begin(S_MODE_CURRENT,0,ret+48);net_reset(4);sdk_mode=1;
+ assert(!net_hook(symbols[S_LWIP_INIT]));hook(S_CONNECT,0,0,0,0);net_service_guest();assert(net_get_stats().connected);
 }
 static void write_bytes(const char *path,const void *bytes,size_t size) {
  FILE *f=fopen(path,"wb");assert(f);assert(fwrite(bytes,1,size,f)==size);assert(!fclose(f));
@@ -130,6 +170,6 @@ int main(void) {
  assert(!net_receive(1,frame,60));net_service_guest();assert(inputs==1 && net_get_stats().rx_pending==0);
  hook(S_CONNECT,0,0,0,0);net_service_guest();assert(net_get_stats().connected);
  assert(hook(S_TX,0,DRAM_BASE+512,DRAM_BASE+2048,60)==0);assert(net_receive(1,frame,60));net_reset(2);net_service_guest();assert(frees==NET_QUEUE_MAX && inputs==1);assert(!net_receive(1,frame,60));
- profile_lifecycle();
+ mode_lifecycle();profile_lifecycle();
  puts("net adapter ownership/scheduler/reset tests passed");
 }

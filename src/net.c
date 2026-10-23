@@ -10,6 +10,7 @@ enum symbol {
     S_DHCP_STOP, S_IFUPDOWN, S_LWIP_INIT, S_CONNECT, S_DISCONNECT, S_STATUS,
     S_IP_GET, S_IP_SET, S_EVENT_CB, S_DHCPC_START, S_DHCPC_STOP, S_DHCPC_STATUS,
     S_RSSI, S_MAC_GET, S_CONFIG_GET, S_CONFIG_SET, S_CONFIG_CURRENT, S_CHANNEL,
+    S_MODE_SET, S_MODE_CURRENT, S_MODE_GET,
     S_COUNT
 };
 static const char *const names[S_COUNT] = {
@@ -21,7 +22,7 @@ static const char *const names[S_COUNT] = {
     "wifi_set_event_handler_cb", "wifi_station_dhcpc_start", "wifi_station_dhcpc_stop",
     "wifi_station_dhcpc_status", "wifi_station_get_rssi", "wifi_get_macaddr",
     "wifi_station_get_config", "wifi_station_set_config", "wifi_station_set_config_current",
-    "wifi_get_channel"
+    "wifi_get_channel", "wifi_set_opmode", "wifi_set_opmode_current", "wifi_get_opmode"
 };
 static uint32_t symbols[S_COUNT];
 // Entry-point filter: avoid a linear symbol scan for ordinary instructions.
@@ -32,6 +33,9 @@ typedef struct { uint16_t size; uint8_t data[NET_FRAME_MAX]; } frame_t;
 static struct {
     uint64_t generation;
     bool busy, updating, lwip_seen, connected, initialized, start, stop, dhcp, dhcp_running;
+    bool mode_check;
+    struct { uint32_t pc, sp; } mode_returns[8];
+    unsigned mode_return_count;
     uint32_t event_cb, ip, mask, gw, static_ip, static_mask, static_gw;
     uint8_t ssid[32], mac[6], bssid[6];
     uint32_t releases[NET_QUEUE_MAX];
@@ -122,10 +126,25 @@ static void set_ip(uint32_t ip, uint32_t mask, uint32_t gw) {
     n.ip = ip; n.mask = mask; n.gw = gw;
     if (changed && n.connected) event(3);
 }
+static void disconnect(void) {
+    n.start = false;
+    n.stop = n.stop || n.connected || n.dhcp_running;
+    if (n.connected) event(1);
+    n.connected = false;
+    set_ip(0, 0, 0);
+}
 bool net_hook(uint32_t pc) {
     if (!enabled) return false;
     unsigned bit = entry_key(pc);
     if (!(entry_bits[bit / 8] & (1u << (bit % 8)))) return false;
+    // Observe completion, not entry, of real SDK mode setters. A setter may
+    // yield before returning, or return false without changing the SDK mode.
+    for (unsigned i = 0; i < n.mode_return_count; ) {
+        if (n.mode_returns[i].pc == pc && n.mode_returns[i].sp == C.a[1]) {
+            n.mode_returns[i] = n.mode_returns[--n.mode_return_count];
+            n.mode_check = true;
+        } else i++;
+    }
     int s; for (s = 0; s < S_COUNT; s++) if (symbols[s] && symbols[s] == pc) break;
     uint32_t a = C.a[2], b = C.a[3];
     switch (s) {
@@ -165,11 +184,17 @@ bool net_hook(uint32_t pc) {
         if (!n.connected) n.start = true;
         return return_value(1);
     case S_DISCONNECT:
-        n.start = false; n.stop = true;
-        if (n.connected) event(1);
-        n.connected = false;
-        set_ip(0, 0, 0);
+        disconnect();
         return return_value(1);
+    case S_MODE_SET: case S_MODE_CURRENT:
+        if (!symbols[S_MODE_GET]) return false;
+        if (n.mode_return_count == sizeof n.mode_returns / sizeof n.mode_returns[0])
+            emu_halt("network: too many nested SDK mode setters");
+        n.mode_returns[n.mode_return_count].pc = C.a[0];
+        n.mode_returns[n.mode_return_count++].sp = C.a[1];
+        bit = entry_key(C.a[0]);
+        entry_bits[bit / 8] |= (uint8_t)(1u << (bit % 8));
+        return false; // execute the real setter, including persistent writes
     case S_STATUS: return return_value(n.connected ? (n.ip ? 5 : 1) : (n.start ? 1 : 0));
     case S_IP_GET:
         if (a != 0) return false;
@@ -223,14 +248,29 @@ void net_service_guest(void) {
     n.busy = true;
     bool waiting = C.waiting; C.waiting = false;
     uint32_t zero = 0;
+    if (symbols[S_MODE_GET] && !n.mode_return_count && (n.mode_check || n.start)) {
+        n.mode_check = false;
+        if (!(call(S_MODE_GET, 0, NULL) & 1u)) disconnect();
+    }
     if (n.stop) {
         n.stop = false;
         if (n.dhcp_running) call(S_DHCP_STOP, 1, &zero);
         n.dhcp_running = false;
+        if (n.initialized) {
+            // Clear the old address through real lwIP so its TCP PCBs observe
+            // address loss, then take the link down. No private PCB mutation.
+            uint32_t clear[7] = {0, 0, 0, 0, 0, 0, 1500};
+            n.updating = true;
+            call(S_UPDATE, 7, clear);
+            n.updating = false;
+        }
         uint32_t down[2] = {0, 0}; call(S_UPDOWN, 2, down);
         n.rx_head = n.rx_count = 0;
+        // Forget NAT sessions and queued host packets from the old link. Guest
+        // TX references still get their normal exactly-once release below.
+        if (backend.reset) backend.reset(backend.ctx, n.generation);
     }
-    if (n.start) {
+    if (n.start && !n.mode_return_count) {
         n.start = false;
         uint32_t mac_args[2] = {0, scratch};
         if (!call(S_MAC_GET, 2, mac_args)) {

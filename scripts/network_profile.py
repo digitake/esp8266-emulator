@@ -27,6 +27,7 @@ SYMBOLS = (
     'wifi_station_dhcpc_status', 'wifi_station_get_rssi', 'wifi_get_macaddr',
     'wifi_station_get_config', 'wifi_station_set_config',
     'wifi_station_set_config_current', 'wifi_get_channel',
+    'wifi_set_opmode', 'wifi_set_opmode_current', 'wifi_get_opmode',
 )
 REQUIRED = frozenset(SYMBOLS[:13] + (SYMBOLS[13], SYMBOLS[15], SYMBOLS[20]))
 
