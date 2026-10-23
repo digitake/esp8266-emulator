@@ -21,3 +21,6 @@ Thumbs.db
 *.pcap
 /local/
 /artifacts/
+
+# PlatformIO build output
+.pio/
