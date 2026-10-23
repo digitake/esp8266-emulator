@@ -253,33 +253,72 @@ rebuilt image starts with fresh flash (see [section 7](#7-resets-flash-and-saved
 
 ### Page layout
 
-The header runs across the top. The left column holds the **GPIO panel**, **Pins**
-and **Firmware state** cards, and the right side holds the **Serial console**.
+The header carries the image chip, the profile menu and the live readouts. Below
+it, the left column holds the **Board**, **Boot**, **Signals** and **Network**
+cards, and the **Serial console** fills the right. In a narrow window the cards
+stack: Board first, then the console, then the rest.
 
 | Header item | Meaning |
 | --- | --- |
 | Image chip | File name, size, first 8 hex digits of the SHA-256, flash size, `+elf` when an ELF is loaded, and `saved flash` when flash was resumed from an earlier session. Click it to load another image. |
 | Profile menu | Choose the GPIO display profile |
-| `t` | Emulated time since the last reset |
-| `speed` | Measured ratio of emulated time to real time; `max · N×` in maximum-speed mode |
-| `MIPS` | Million guest instructions per host second |
+| `emulated` | Emulated time since the last reset |
+| `speed` | Measured ratio of emulated time to real time, with a sparkline of the last 20 seconds; `max · N×` in maximum-speed mode. The `1×`, `¼×` and `max` buttons beside it set the speed. |
+| `MIPS` | Million guest instructions per host second, with a sparkline |
 | `boot` | Boot number since the image was loaded or the flash erased; every reset adds one |
 | Stage pill | Current boot stage, red `halted` if execution stopped, `stopped` if the emulator process ended, `disconnected` if the page lost contact with the server |
 
-### GPIO panel
+### Board
 
-With the default `generic` profile this card only explains how to drive pins. With
-a [GPIO profile](#8-gpio-profiles) it draws a faceplate with one group per
-button, relay and LED:
+The Board card draws an ESP-12F module with its 22 pads where they are on the real
+part: RST, ADC, EN, GPIO16, GPIO14, GPIO12, GPIO13 and VCC down the left edge; the
+flash bus (GPIO11 CS0, GPIO7 MISO, GPIO9, GPIO10, GPIO8 MOSI, GPIO6 SCLK) along
+the bottom; TXD0 (GPIO1), RXD0 (GPIO3), GPIO5, GPIO4, GPIO0, GPIO2, GPIO15 and
+GND up the right edge. The **Reset**, **Power cycle** and **Erase flash** buttons
+in the card title act on the chip (see [section 7](#7-resets-flash-and-saved-state));
+Erase flash asks for confirmation first.
+
+Each GPIO pad shows its level by its fill and its mode by the tag under its name:
+
+| Pad | Meaning |
+| --- | --- |
+| Green fill | HIGH |
+| Dark fill | LOW |
+| Dashed outline | Input without pull-up, floating |
+| Amber outline | Driven from outside (see below) |
+| Hatched | Flash bus, GPIO6–11; cannot be driven |
+
+| Mode tag | Meaning |
+| --- | --- |
+| `OUT` | Output driven by the firmware |
+| `IN↑` | Input with pull-up |
+| `IN~` | Input without pull-up; floating unless driven |
+| `FN` | UART or another peripheral function |
+
+The role after the mode tag comes from the profile (`relay`, `led`, `button`,
+`status led`, numbered when a profile has several groups), plus `TXD0`/`RXD0` on
+GPIO1/GPIO3. Hover a pad, or reach it with Tab, for its role, mode, level, edge
+count since the image was loaded, and drive state. The edge count covers every
+level or mode change.
+
+**Click a pad** to drive the pin from outside: the first click drives it LOW, the
+second HIGH, the third releases it (Enter or Space does the same on a focused pad).
+A driven pad has an amber outline. GPIO6–11 form the flash bus and cannot be driven.
+
+An external drive stays in place across **Reset**. **Power cycle** releases every
+external drive and clears the amber outlines.
+
+With a [GPIO profile](#8-gpio-profiles) a faceplate appears above the module, with
+one group per button, relay and LED:
 
 - **Lamp:** the relay output. It is lit when the relay pin is at the level chosen
   under *relay drawn ON when its pin is LOW / HIGH*. This is a display setting
   only, remembered by your browser.
 - **Round pad:** the button. Press and hold it to drive the button GPIO to its
   active level (LOW unless the profile says otherwise); releasing it releases the
-  pin. While you hold, the panel shows `GPIO0 held LOW for 1.2 s (emulated)`, and
-  afterwards `released after … s emulated`, which helps when testing long-press
-  features.
+  pin. While you hold, the faceplate shows `GPIO0 held LOW for 1.2 s (emulated)`,
+  and afterwards `released after … s emulated`, which helps when testing
+  long-press features.
 - **Pad ring:** glows green when the LED pin is an output at its active level.
 - **Small dot at the top:** the status LED, if the profile defines one.
 
@@ -287,55 +326,61 @@ A group is dimmed and its relay reads `unused` until the firmware configures the
 relay pin as an output. How the firmware reacts to a press is up to the firmware;
 the profile only maps pins.
 
-### Pins
+### Boot
 
-All 17 GPIOs are listed. Each tile shows a level dot, role labels, the mode, the
-level and an edge count.
-
-| Mode | Meaning |
-| --- | --- |
-| `OUT` | Output driven by the firmware |
-| `IN↑` | Input with pull-up |
-| `IN~` | Input without pull-up; floating unless driven |
-| `FN` | UART or another peripheral function |
-
-A green dot is HIGH, a dark dot is LOW and a dashed ring is floating. Role labels
-come from the profile, plus `U0TXD`/`U0RXD` on GPIO1/GPIO3 and `flash` on GPIO6–11.
-The edge count covers every level or mode change since the image was loaded.
-
-**Click an input tile** to drive it from outside: the first click drives it LOW,
-the second HIGH, the third releases it. A driven tile has an amber border.
-GPIO6–11 form the flash bus and cannot be driven.
-
-An external drive stays in place across **Reset**. **Power cycle** releases every
-external drive and clears the amber borders.
-
-### Firmware state
-
-The stage chips show how far the current boot has progressed. Reached stages are
-highlighted, the current one is green, and the number is the time after reset in
-milliseconds (hover for more precision).
+The timeline shows how far the current boot has progressed:
+ROM → eboot → app → SDK → setup() → loop(). Reached stages are blue, the current
+one green, and the time under each stage is measured from reset (hover for more
+precision). The card title gives the boot number and reset reason.
 
 | Stage | Meaning |
 | --- | --- |
-| ROM loader | The emulated ROM printed its banner and is loading the image |
+| ROM | The emulated ROM printed its banner and is loading the image |
 | eboot | The image's entry point is in the bootloader area (Arduino eboot) |
-| app entry | Application code has started |
-| SDK main loop | The SDK task loop is running |
+| app | Application code has started |
+| SDK | The SDK task loop is running |
 | setup() | First call of `setup()`; needs the ELF |
 | loop() | First call of `loop()`; needs the ELF |
 
-| Row | Meaning |
+Under the timeline, one chip per boot since the image was loaded shows its number
+and reason: `PWR` power on, `RST` external reset, `SW` software, `WDT` watchdog.
+The current boot is outlined; hover a chip for the emulated time of that reset.
+
+| Readout | Meaning |
 | --- | --- |
-| reset reason | power on, external reset, software or watchdog, plus the boot number |
 | loop() | `loop()` calls this boot with an ELF; loop-task runs without one |
-| soft AP, station, Wi-Fi scans | Read from the SDK's own serial messages such as `mode : sta(…)` or `scandone`; they stay `-` if the firmware prints none |
-| Host network | Always `unavailable: no host network bridge` |
 | UART0 | Baud rate calculated from the firmware's divider (115200 shows as 115273) and bytes sent |
-| CPU | Current CPU clock in MHz |
+| CPU | Current CPU clock in MHz and instructions executed this boot |
 
 If the emulator stops executing the firmware, a red box shows the reason; see
 [section 11](#11-debug-firmware-that-does-not-boot).
+
+### Signals
+
+The Signals card is a logic-analyzer view of recent pin edges, each timestamped by
+the emulator in emulated time. A pin appears when its level first changes (up to
+six automatically); the `GPIOn` chips above the trace carry each pin's edge count
+and show or hide it. Pick the window with `100 ms`, `1 s`, `10 s` or `1 min`; the
+right edge is now. Blue vertical lines mark reboots. Hover the trace for the time
+at the cursor and the level of every shown pin at that moment. The flash bus,
+GPIO6–11, is never shown.
+
+The window measures emulated time, so at `max` speed it scrolls faster than real
+time.
+
+### Network
+
+The Network card shows what the SDK's own serial messages say about Wi-Fi:
+
+| Badge | Meaning |
+| --- | --- |
+| soft AP | `-` until the SDK reports it; green with its IP when up (`add if1`, `dhcp server start`, `AP started`); `down` after `del if1` or `bcn 0` |
+| station | Idle, scanning or connection state from `scandone`, `connected with`, `ip:` and similar lines |
+| scans | Wi-Fi scans this boot |
+| host network | `unavailable: no host network bridge`; a host network bridge reports its state here |
+
+Hover a badge for the MAC addresses. The badges stay `-` if the firmware prints
+none of these messages.
 
 ### Serial console
 
@@ -347,10 +392,6 @@ monitor usually shows as garbage, are readable. A line such as
 
 | Control | Effect |
 | --- | --- |
-| Reset | External reset (EXT_RST): RTC memory kept, reset reason 2 |
-| Power cycle | RAM and RTC memory cleared, reset reason 1; flash kept |
-| Erase flash | After confirmation, rewrites flash from the original image and powers up; saved configuration is lost |
-| speed `1×` / `¼×` / `max` | Real time, quarter speed, or as fast as the host allows |
 | off-wire output | Shows, dimmed, bytes the firmware wrote to a UART while its TX pin was assigned to another function. Untick it to see only what a USB-serial adapter would receive. |
 | emulator log | Shows the emulator's own messages in italics, such as unimplemented ROM calls, halts and ELF problems |
 | follow | Keeps the console scrolled to the newest output |
@@ -614,7 +655,7 @@ than requested; `edges` events and reports record the actual time.
 
 Work through these steps in order:
 
-1. **Find the last stage reached.** The stage chips (GUI) or `stage` lines
+1. **Find the last stage reached.** The Boot timeline (GUI) or `stage` lines
    (headless) show where the boot stopped. Without an ELF, SDK main loop is the
    normal final stage.
 2. **Read the console.** Tick **emulator log** to see the emulator's own messages
@@ -849,7 +890,7 @@ and live Updater writes are **not** exercised; see
 | Console stops after the boot messages | The firmware may write to UART1 (violet), move TX to another pin (tick **off-wire output**), or not print at all. Tick **emulator log** for more detail. |
 | Boot counter keeps climbing | The firmware keeps resetting. Check the reset reason; 4 is the watchdog ([section 11](#11-debug-firmware-that-does-not-boot)). |
 | Wi-Fi never connects; station shows `scanned (no access point: the emulator has no radio)` | Expected: there is no radio or network ([section 1](#1-what-the-emulator-does)). |
-| Header speed stays below `1.00×` | The host cannot keep up in real time. The results are still valid; use `max` for long runs. |
+| The `speed` readout stays below `1.00×` | The host cannot keep up in real time. The results are still valid; use `max` for long runs. |
 | Saved settings disappeared after a rebuild | A new build has a new SHA-256 and therefore fresh flash ([section 7](#7-resets-flash-and-saved-state)). |
 | `evidence.py: error: --seconds must be a finite positive number` | Pass a positive `--seconds` value. |
 | `firmware hash mismatch: …` from `regression.py` | The image differs from the one the reference was recorded with. Record a new reference. |

@@ -52,10 +52,12 @@ default port is occupied. Ctrl+C stops the server.
 
 ## GPIO and firmware inspection
 
-The default view exposes all 17 GPIOs without assuming a board layout. Drive
-inputs LOW/HIGH or release them; inspect modes, levels and edge counts. An
-optional [GPIO profile](examples/gpio-profile.json) assigns your own button,
-relay and LED roles for a faceplate:
+The GUI draws an ESP-12F module with every pad in place, showing each GPIO's
+level and mode live. Click a pad to drive an input LOW, HIGH or release it;
+hover it for its role, level and edge count. A Signals card shows recent pin
+edges as a logic-analyzer trace. An optional
+[GPIO profile](examples/gpio-profile.json) assigns your own button, relay and
+LED roles for a faceplate above the module:
 
 ```sh
 bash run-gui.sh --profile-file /path/to/gpio-profile.json
@@ -65,9 +67,10 @@ Use `-ProfileFile C:\path\to\gpio-profile.json` with the Windows launcher.
 A profile changes the display and input mapping; application behavior remains
 in the firmware.
 
-The GUI also provides live UART, boot stages, reset cause, reset/power/erase
-controls and speed selection. Known credential fields are masked before GUI
-output. Firmware configuration persists in a flash file per uploaded image.
+The GUI also provides the live UART console, a boot timeline with reset
+history, Wi-Fi state badges, reset/power/erase controls and speed selection.
+Known credential fields are masked before GUI output. Firmware configuration
+persists in a flash file per uploaded image.
 
 The server binds **127.0.0.1 only**, validates Host and Origin, and caps uploads
 at 16 MiB. Images are stored by SHA-256 under
