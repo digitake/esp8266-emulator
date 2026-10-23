@@ -114,7 +114,7 @@ page instead. Press Ctrl+C in the terminal to stop it.
 | Board | ESP-12F drawing with each pin's live level and mode. Click a pad to drive it LOW, HIGH or release it. |
 | Boot | ROM → eboot → app → SDK → `setup()` → `loop()` timeline, and the reason for every reset |
 | Signals | Logic-analyzer trace of recent pin changes |
-| Network | Soft AP and station state, as reported by the firmware |
+| Network | Soft AP and station state, as reported by the firmware; with `--net-profile`, the virtual station's IP, packet counts and links to forwarded ports |
 | Serial console | UART output with credentials masked; send text to the firmware |
 
 The **Reset**, **Power cycle** and **Erase flash** buttons act like the real
@@ -130,7 +130,7 @@ See [Use the GUI](docs/USER-MANUAL.md#6-use-the-gui) for every control.
 | Find why a boot fails | The Boot card, the **emulator log** toggle, `--strict` | [Debug a boot](docs/USER-MANUAL.md#11-debug-firmware-that-does-not-boot) |
 | Prove nothing changed | `scripts/evidence.py`, then `scripts/regression.py` | [Reports and regression](docs/USER-MANUAL.md#12-reports-regression-and-ota-tests) |
 | Test an OTA update | `scripts/ota_rehearsal.py` with your own images, offline | [OTA tests](docs/USER-MANUAL.md#12-reports-regression-and-ota-tests) |
-| Give firmware a network | `make network`, then `build/esp8266emu-net --net-profile …` | [Virtual network](docs/USER-MANUAL.md#virtual-network-experimental) |
+| Give firmware a network | `make network`, then `build/esp8266emu-net --net-profile …`, or in the GUI `bash run-gui.sh --net-profile …` | [Virtual network](docs/USER-MANUAL.md#virtual-network-experimental) |
 | Emulate an ESP8285 or a given flash size | `--chip esp8285` or `--flash-size 0x200000` | [Chip and flash](docs/USER-MANUAL.md#chip-and-flash-options) |
 
 ## How it works

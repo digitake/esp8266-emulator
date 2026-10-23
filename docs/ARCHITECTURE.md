@@ -105,6 +105,11 @@ before erasing it, and rejects events from an earlier process generation. Upload
 are published atomically under SHA-256 filenames. Host/Origin checks and a fixed
 127.0.0.1 bind keep the interface local.
 
+With `--net-profile`, the server starts `build/esp8266emu-net` only for an image
+whose SHA-256 the profile lists; any other image runs on the offline runner, so
+the runner's image check never halts an upload. It turns `net` events into the
+Network card's badges and refuses speed 0 while the network runner is active.
+
 ## Headless protocol
 
 Without `--quiet`, stdout contains one JSON object per line. Each event has a
@@ -120,6 +125,7 @@ Without `--quiet`, stdout contains one JSON object per line. Each event has a
 | `log` | `m` | Diagnostic message |
 | `halt` | `m`, `pc` | Stop reason and guest PC |
 | `call` | `fn`, `a2`–`a4`, `ra` | Function watch observation |
+| `net` | `bound`, `image`, `connected`, `ip`, `tx`, `rx`, `tx_rejected`, `rx_dropped` | Virtual station state, every 500 ms with `--net-profile` only |
 
 Commands are newline-delimited text on stdin:
 

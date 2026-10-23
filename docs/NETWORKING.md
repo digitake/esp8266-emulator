@@ -109,7 +109,10 @@ state and saved configuration. These transitions need verification for each SDK.
 
 The optional libslirp user-mode NAT backend supplies DHCP and DNS while the guest
 runs its own protocols. TAP is not implemented. Keep the GUI loopback-only and
-use local test services for repeatable integration checks.
+use local test services for repeatable integration checks. The GUI's opt-in
+`--net-profile` starts this runner only for images whose SHA-256 the profile
+lists, keeps its own loopback bind and Host/Origin checks, and shows the runner's
+`net` events (binding, station state, address and packet counts) in its Network card.
 
 This approach would not test WPA authentication/encryption, RF contention,
 acknowledgments/retries, real AP interoperability, roaming, radio sleep or measured

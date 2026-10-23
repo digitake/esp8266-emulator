@@ -243,11 +243,35 @@ ESP8266 emulator GUI: http://127.0.0.1:8266/  (loopback only; Ctrl+C to stop)
 | `--elf FILE` | none | Matching ELF for `setup()`/`loop()` tracking |
 | `--profile-file FILE` | none | Load a [GPIO profile](#8-gpio-profiles) and make it the default view |
 | `--port N` | `8266` | Port on 127.0.0.1 |
-| `--speed X` | `1` | Initial speed: `1` real time, `0` as fast as possible |
+| `--speed X` | `1` | Initial speed: `1` real time, `0` as fast as possible (not with `--net-profile`) |
 | `--workdir DIR` | `~/.cache/esp8266-emulator` | Where uploaded images and saved flash are kept |
+| `--net-profile FILE` | none | Experimental: run the images this [network profile](#virtual-network-experimental) binds on the virtual network |
+| `--net-forward HOST:GUEST` | none | Forward `127.0.0.1:HOST` to port GUEST of the guest, for example `8080:80` for its web server. Repeat for more ports, up to 16. |
+| `--net-host NAME=IP` | none | Answer the guest's DNS query for NAME with IP, for example `broker.example.test=10.0.2.2` for a broker on your computer. Up to 16. |
+| `--net-capture FILE` | none | Write the guest's Ethernet frames to a PCAP file. It starts over whenever the GUI starts a new emulator process (an upload or **Erase flash**). Captures can contain credentials. |
 
 Ctrl+C stops the server. The emulated chip is shut down cleanly and its flash is
 saved.
+
+The four `--net-` options are off by default; without them the GUI runs exactly as
+before. `--net-forward`, `--net-host` and `--net-capture` need `--net-profile`.
+With `--net-profile`, the server first builds `build/esp8266emu-net`, which takes
+a while the first time. Without libslirp it stops and names the packages to
+install: `sudo apt install -y libslirp-dev libglib2.0-dev pkg-config`.
+
+```sh
+bash run-gui.sh --bin firmware.bin --elf firmware.elf \
+  --net-profile /tmp/network-profile.txt --net-forward 8080:80
+```
+
+The profile binds exact builds, so the GUI checks every image you load against
+the SHA-256 hashes in it. An image the profile binds runs on the network runner;
+any other image runs offline as usual, and the Network card says why. The profile
+is read again for every image, so a regenerated profile takes effect with the next
+upload. Speed `0` is refused while the virtual network runs: `--speed 0` together
+with `--net-profile` stops at startup, and the page's **max** button is off
+([Network](#network) shows what the page displays). Forwarded ports listen on
+127.0.0.1 only, and the GUI keeps its own loopback-only checks.
 
 ### From Windows PowerShell
 
@@ -260,12 +284,22 @@ saved.
 | `-Bin`, `-Elf`, `-ProfileFile` | none | Windows paths, passed to `--bin`, `--elf` and `--profile-file` |
 | `-Port` | `8266` | Port on 127.0.0.1 |
 | `-Distro` | `Ubuntu` | The WSL distribution that runs the emulator; list yours with `wsl -l -q` |
+| `-NetProfile`, `-NetCapture` | none | Passed to `--net-profile` and `--net-capture`. A path that starts with `/` is taken as a WSL path, so a profile made in Ubuntu works as is. |
+| `-NetForward`, `-NetHost` | none | Passed to `--net-forward` and `--net-host`; separate several with commas: `-NetForward 8080:80,8081:81` |
 
 The script runs `run-gui.sh` inside WSL and opens your default browser as soon as
 the server answers. It does not offer `--speed` or `--workdir`. To use those, run
 `run-gui.sh` from the Ubuntu shell. Saved state lives in your WSL home folder,
 which Windows Explorer shows at
 `\\wsl$\Ubuntu\home\<linux-user>\.cache\esp8266-emulator`.
+
+The virtual network needs libslirp inside that distribution (see above), and the
+profile must come from `scripts/network_profile.py` run in WSL, so that the image
+paths in it are Linux paths:
+
+```powershell
+.\run-gui.ps1 -Bin C:\fw\firmware.bin -Elf C:\fw\firmware.elf -NetProfile /tmp/network-profile.txt -NetForward 8080:80
+```
 
 If PowerShell reports that running scripts is disabled, start the launcher for
 that one run like this:
@@ -310,7 +344,7 @@ stack: Board first, then the console, then the rest.
 | Image chip | File name, size, first 8 hex digits of the SHA-256, flash size, `+elf` when an ELF is loaded, and `saved flash` when flash was resumed from an earlier session. Click it to load another image. |
 | Profile menu | Choose the GPIO display profile |
 | `emulated` | Emulated time since the last reset |
-| `speed` | Measured ratio of emulated time to real time, with a sparkline of the last 20 seconds; `max · N×` in maximum-speed mode. The `1×`, `¼×` and `max` buttons beside it set the speed. |
+| `speed` | Measured ratio of emulated time to real time, with a sparkline of the last 20 seconds; `max · N×` in maximum-speed mode. The `1×`, `¼×` and `max` buttons beside it set the speed; `max` is dimmed while the image runs on the virtual network. |
 | `MIPS` | Million guest instructions per host second, with a sparkline |
 | `boot` | Boot number since the image was loaded or the flash erased; every reset adds one |
 | Stage pill | Current boot stage, red `halted` if execution stopped, `stopped` if the emulator process ended, `disconnected` if the page lost contact with the server |
@@ -417,18 +451,32 @@ time.
 
 ### Network
 
-The Network card shows what the SDK's own serial messages say about Wi-Fi:
+The Network card shows what the SDK's own serial messages say about Wi-Fi. When
+the GUI was started with `--net-profile` and the image runs on the virtual
+network, it also shows what the network runner reports:
 
 | Badge | Meaning |
 | --- | --- |
 | soft AP | `-` until the SDK reports it; green with its IP when up (`add if1`, `dhcp server start`, `AP started`); `down` after `del if1` or `bcn 0` |
 | station | Idle, scanning or connection state from `scandone`, `connected with`, `ip:` and similar lines |
 | scans | Wi-Fi scans this boot |
-| host network | `unavailable: no host network bridge`. The GUI runs the offline build, so this is the only value today. |
+| host network | Offline runs only. `unavailable: no host network bridge` without `--net-profile`. With it, an image the profile does not bind shows `offline: this image (sha256 …) is not in the network profile`, and a profile that cannot be read shows `offline: network profile unusable (…)`. Hover for the whole text. |
+| virtual station | Virtual network only. `starting`, then `waiting for the application` until the runner matches the profile at the application stage, then `not connected` or green `connected`. `halted` when execution stopped; `stopped: …` with the runner's last message when it exited, for example because the BIN named in the profile was rebuilt. |
+| IP | The guest's address once connected, normally `10.0.2.15` |
+| packets | Ethernet frames the guest sent (`tx`) and received (`rx`), and how many were dropped |
+| guest :PORT | One per `--net-forward`: a link to `http://127.0.0.1:HOST/`, which opens that guest port in a new tab |
 
 Hover a badge for the MAC addresses. The badges stay `-` if the firmware prints
-none of these messages. Nothing the GUI shows here is a real network: for firmware
-that must reach a broker or a web server, use the headless
+none of these messages. The runner's badges are refreshed twice a second.
+
+While the virtual network runs, **max** in the header is off: live networking
+needs a positive speed. Clicking it says so, and the server refuses speed 0 as
+well. If **max** was selected when you load an image that runs on the virtual
+network, the GUI switches to `1×` and says so in the emulator log.
+
+Without `--net-profile`, nothing the GUI shows here is a real network. For
+firmware that must reach a broker or a web server, start the GUI with
+[`--net-profile`](#5-start-the-gui), or use the headless
 [virtual network](#virtual-network-experimental).
 
 ### Serial console
@@ -648,6 +696,7 @@ synthetic image, shortened:
 | `log` | `m` | Emulator message |
 | `halt` | `m`, `pc` | Why execution stopped |
 | `call` | `fn`, `n`, `a2`–`a4`, `ra` | A `--watch` hit |
+| `net` | `bound`, `image`, `connected`, `ip`, `tx`, `rx`, `tx_rejected`, `rx_dropped` | With `--net-profile` only, twice a second: whether the profile is bound (and which image), the station state, its address and packet counts |
 
 `vt_us` counts from the last reset and `t_us` from emulator start. See
 [architecture](ARCHITECTURE.md#headless-protocol) for details.
@@ -708,7 +757,7 @@ firmware built with **Arduino core 3.1.2 and lwIP2** a Wi-Fi station connection.
 The guest's own TCP/IP stack runs unchanged. The emulator hands its Ethernet
 frames to a user-mode NAT on your host (libslirp), so the firmware can use DHCP,
 DNS, MQTT and HTTP. Point it at test services on your own computer. There is no
-radio, WPA, soft AP or scanning, and the GUI cannot use this runner yet.
+radio, WPA, soft AP or scanning.
 
 1. Install the extra packages and build the network runner:
 
@@ -736,6 +785,17 @@ radio, WPA, soft AP or scanning, and the GUI cannot use this runner yet.
      --no-stdin --report /tmp/network-report.json
    ```
 
+   Or use the same profile from the GUI instead, which builds the runner for you
+   and shows the station, its IP, packet counts and forwarded ports in the
+   [Network](#network) card:
+
+   ```sh
+   bash run-gui.sh --net-profile /tmp/network-profile.txt --net-forward 8080:80
+   ```
+
+   The GUI runs only the images the profile binds on the network runner. Others
+   run offline. See [section 5](#5-start-the-gui) for its options.
+
 The guest gets address `10.0.2.15`. From the guest, your host is `10.0.2.2` and the
 DNS server is `10.0.2.3`.
 
@@ -744,6 +804,8 @@ DNS server is `10.0.2.3`.
 | `--net-forward 8080:80` | Forward `127.0.0.1:8080` on the host to port 80 of the guest, for example to open its web server |
 | `--net-host broker.example.test=10.0.2.2` | Answer the guest's DNS query for that name with that address; up to 16 names |
 | `--net-capture /tmp/net.pcap` | Record every Ethernet frame for Wireshark. Captures can contain credentials. |
+
+`run-gui.sh` takes the same three options together with `--net-profile`.
 
 Network runs depend on host timing, so they are not repeatable the way offline
 runs are. [Virtual networking](NETWORKING.md) describes the design and what has
@@ -1030,7 +1092,10 @@ criteria.
 | `loop()` row shows loop-task runs | No ELF was loaded. Drop the `.bin` and `.elf` together. |
 | Console stops after the boot messages | The firmware may write to UART1 (violet), move TX to another pin (tick **off-wire output**), or not print at all. Tick **emulator log** for more detail. |
 | Boot counter keeps climbing | The firmware keeps resetting. Check the reset reason; 4 is the watchdog ([section 11](#11-debug-firmware-that-does-not-boot)). |
-| Wi-Fi never connects; station shows `scanned (no access point: the emulator has no radio)` | Expected in the GUI and the default build, which have no network. For network tests use the headless [virtual network](#virtual-network-experimental). |
+| Wi-Fi never connects; station shows `scanned (no access point: the emulator has no radio)` | Expected in the default build and in the GUI without `--net-profile`, which have no network. For network tests use the [virtual network](#virtual-network-experimental). |
+| `--net-profile needs the network runner …, and building it needs libslirp` | The GUI was started with `--net-profile`, but libslirp is missing. Install it: `sudo apt install -y libslirp-dev libglib2.0-dev pkg-config`. |
+| Network card: `offline: this image (sha256 …) is not in the network profile` | The profile binds exact builds. Regenerate it with `scripts/network_profile.py` for this BIN and its ELF, then load the image again. |
+| `live networking needs a positive speed: the network runner refuses 0 (max)` | The image runs on the virtual network; choose `1×` or `¼×`. |
 | `pio: command not found` | PlatformIO is not installed on this side. Install [PlatformIO Core](https://docs.platformio.org/en/latest/core/installation/index.html), or build on Windows and run `run-gui.ps1` ([section 2](#your-first-run-with-the-example)). |
 | `flash: image is N bytes; flash capacity is M bytes` | The file is larger than the flash size in its header or the selected `--chip`. Use the image for address 0x0, or a larger `--flash-size`. |
 | `unknown chip profile: …` | Use one of `esp8266`, `esp12e`, `esp12f`, `esp8285`, `esp8285h16`. |
@@ -1057,6 +1122,9 @@ make && make check
 
 # GUI (Linux/WSL), then open http://127.0.0.1:8266/
 bash run-gui.sh --bin fw.bin --elf fw.elf [--profile-file board.json] [--port N]
+
+# GUI on the virtual network (experimental; needs libslirp)
+bash run-gui.sh --bin fw.bin --elf fw.elf --net-profile net.txt --net-forward 8080:80
 
 # Quick headless boot check
 build/esp8266emu --flash fw.bin --speed 0 --max-seconds 10 --no-stdin --quiet
@@ -1086,6 +1154,7 @@ build/esp8266emu-net --flash fw.bin --net-profile net.txt --speed 1 --net-forwar
 ```powershell
 # GUI from Windows
 .\run-gui.ps1 -Bin C:\path\fw.bin -Elf C:\path\fw.elf [-ProfileFile board.json] [-Port N]
+.\run-gui.ps1 -Bin C:\path\fw.bin -Elf C:\path\fw.elf -NetProfile /tmp/net.txt -NetForward 8080:80
 ```
 
 ## 16. Glossary
