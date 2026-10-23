@@ -225,12 +225,13 @@ main { display: grid; grid-template-columns: minmax(360px, 440px) 1fr; gap: 12px
         <button id="btnReset" class="small" title="EXT_RST: RTC memory kept, reset reason 2">Reset</button>
         <button id="btnPower" class="small" title="power cycle: RAM and RTC memory cleared, reason 1; flash kept">Power cycle</button>
         <button id="btnErase" class="small" title="rewrite flash from the original image (fresh chip: config gone) and power up">Erase flash</button>
+        <button id="btnSaveFlash" class="small" disabled title="save the emulated flash, with everything the firmware stored, as a .flash file to drop again later with the .bin">Download flash</button>
       </span></h2>
       <div class="board">
         <div class="empty" id="empty">
           <b>Drop firmware.bin + firmware.elf here</b>
           <p>The .bin for flash address 0x0 boots right away. Its .elf adds setup() / loop() tracking and, for an
-            Arduino 3.1.2 image, a local Wi-Fi network.</p>
+            Arduino 3.1.2 image, a local Wi-Fi network. Add a .flash saved earlier to boot with its settings.</p>
           <p><button id="pick" class="small">Choose files…</button></p>
         </div>
         <div id="device"></div>
@@ -285,8 +286,9 @@ main { display: grid; grid-template-columns: minmax(360px, 440px) 1fr; gap: 12px
   </section>
 </main>
 
-<div id="drop"><div><b>Drop to flash and boot</b>firmware.bin, with firmware.elf for setup() / loop() and the network</div></div>
-<input type="file" id="file" multiple accept=".bin,.elf" hidden>
+<div id="drop"><div><b>Drop to flash and boot</b>firmware.bin, with firmware.elf for setup() / loop() and the network,
+  and a saved .flash to boot with its settings</div></div>
+<input type="file" id="file" multiple accept=".bin,.elf,.flash,.img,.dump" hidden>
 <div class="toast" id="toast"></div>
 <div id="tip"></div>
 
@@ -313,16 +315,21 @@ async function api(path, body, raw) {
 const cmd = c => api('/api/cmd', c).catch(e => toast(e.message));
 
 // ---------------------------------------------------------------- upload (drop / pick)
+const SAVED_FLASH = /\.(flash|img|dump)$/i;     // a whole flash saved earlier, never the image itself
 async function upload(files) {
   files = [...files];
-  const bin = files.find(f => /\.bin$/i.test(f.name)) || files.find(f => !/\.elf$/i.test(f.name));
+  const bin = files.find(f => /\.bin$/i.test(f.name)) || files.find(f => !/\.elf$/i.test(f.name) && !SAVED_FLASH.test(f.name));
   const elf = files.find(f => /\.elf$/i.test(f.name));
-  if (!bin) { toast('Choose a .bin flash image starting at address 0x0.'); return; }
+  const flash = files.find(f => SAVED_FLASH.test(f.name));
+  if (!bin) { toast(flash ? 'Drop the saved flash together with the .bin it was saved with.' : 'Choose a .bin flash image starting at address 0x0.'); return; }
   try {
-    let elfSha = '';
+    let elfSha = '', flashSha = '';
     if (elf) elfSha = (await api('/api/elf', await elf.arrayBuffer(), true)).elf;
+    if (flash) flashSha = (await api('/api/flash', await flash.arrayBuffer(), true)).flash;
     const prof = S.profileLocked ? '&profile=' + encodeURIComponent($('profile').value) : '';
-    await api('/api/image?name=' + encodeURIComponent(bin.name) + '&elf=' + elfSha + prof, await bin.arrayBuffer(), true);
+    const j = await api('/api/image?name=' + encodeURIComponent(bin.name) + '&elf=' + elfSha + (flashSha ? '&flash=' + flashSha : '') + prof,
+      await bin.arrayBuffer(), true);
+    if (j.warning) toast(j.warning);
   } catch (e) { toast('Upload refused: ' + e.message); }
 }
 let dragDepth = 0;
@@ -701,6 +708,18 @@ function sendRx() { const v = $('rx').value; if (!v) return; cmd({ cmd: 'rx', te
 $('btnReset').onclick = () => cmd({ cmd: 'reset' });
 $('btnPower').onclick = () => cmd({ cmd: 'power' });
 $('btnErase').onclick = () => { if (confirm('Rewrite the emulated flash from the original image? Saved config (Wi-Fi, keys) in the emulated flash is lost.')) cmd({ cmd: 'erase' }); };
+$('btnSaveFlash').onclick = async () => {    // fetched, not a plain link: an error becomes a toast, not a saved error page
+  if (!S.image) return;
+  try {
+    const r = await fetch('/api/flash?sha=' + S.image.sha);
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.statusText);
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(await r.blob());
+    a.download = (/filename="([^"]+)"/.exec(r.headers.get('Content-Disposition') || '') || [, 'firmware.flash'])[1];
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+  } catch (e) { toast('Download failed: ' + e.message); }
+};
 const markSpeed = v => document.querySelectorAll('.spd').forEach(x => x.classList.toggle('active', +x.dataset.speed === v));
 document.querySelectorAll('.spd').forEach(b => b.onclick = () => {
   if (b.classList.contains('blocked')) { toast(b.title); return; }
@@ -719,7 +738,7 @@ function onEvent(e) {
     case 'image':
       S.image = e; $('imgname').textContent = e.name;
       $('imginfo').textContent = ` ${(e.size / 1024).toFixed(0)} KB · ${e.sha.slice(0, 8)} · flash ${e.flash_size / 1048576} MB${e.has_elf ? ' · +elf' : ''}${e.flash_persisted ? ' · saved flash' : ''}`;
-      $('empty').style.display = 'none'; $('chipbox').classList.remove('nofw');
+      $('empty').style.display = 'none'; $('chipbox').classList.remove('nofw'); $('btnSaveFlash').disabled = false;
       $('chipflash').textContent = `ESP8266EX · ${e.flash_size / 1048576} MB flash`;
       $('spdmax').classList.toggle('blocked', !!e.net);      // the network runner needs a positive speed
       $('spdmax').title = e.net ? 'Max is off while the virtual network runs: live networking needs a positive speed.' : 'as fast as the host can';

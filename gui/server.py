@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Local GUI for the ESP8266 emulator. Serves http://127.0.0.1:PORT/ on the loopback interface only.
 
-Drop a firmware .bin (optionally with its .elf) on the page and the emulated chip boots it immediately.
+Drop a firmware .bin (optionally with its .elf, and a .flash saved earlier) on the page and the emulated chip boots
+it immediately.
 The page shows the UART console (secrets masked), the pins (relay/LED/button roles per device profile),
 the boot stage and what the firmware's UART says about Wi-Fi, and has button/reset/power controls.
 When the network runner (esp8266emu-net, needs libslirp) builds, a .bin dropped with its .elf that is an
@@ -92,6 +93,26 @@ def free_port(start, avoid=()):
 def flash_size_from_header(b3):
     return {0: 0x80000, 1: 0x40000, 2: 0x100000, 3: 0x200000, 4: 0x400000, 5: 0x200000, 6: 0x400000,
             8: 0x800000, 9: 0x1000000}.get(b3 >> 4, 0x400000)
+
+
+def size_text(n):
+    return '%d KB' % (n >> 10) if n < 1 << 20 else '%g MB' % (n / (1 << 20))
+
+
+def check_saved_flash(body):
+    """None when body can be a saved flash (a whole flash image, as --flash-out writes it), else why not."""
+    if len(body) < 16 or body[0] != 0xE9:
+        return ('not a saved flash (first byte must be 0xE9): drop a .flash saved by this GUI, or a full flash '
+                'read from address 0x0')
+    if len(body) != flash_size_from_header(body[3]):    # the emulator sizes its flash from this header
+        return ('a saved flash is the whole flash: this file is %d bytes, its header says %s'
+                % (len(body), size_text(flash_size_from_header(body[3]))))
+    return None
+
+
+def download_name(name):
+    base = re.sub(r'\.bin$', '', name or '', flags=re.I)
+    return (re.sub(r'[^A-Za-z0-9._-]', '_', base).strip('.') or 'firmware') + '.flash'
 
 
 def atomic_write(path, data):
@@ -357,13 +378,16 @@ class Emulator:
                 if p.stdin:
                     p.stdin.close()
 
-    def start(self, image, fresh=False):
+    def start(self, image, fresh=False, flash=None):
+        """flash: bytes of a saved flash to boot from, replacing the image's saved flash."""
         with self.lock:
             self.stop()
             self.image = image
             binp, flashp, _ = self.paths(image['sha'])
-            # The outgoing process saves flash on exit. Erase only after it has exited.
-            if fresh and os.path.exists(flashp):
+            # The outgoing process saves flash on exit. Erase or replace it only after it has exited.
+            if flash is not None:
+                atomic_write(flashp, flash)
+            elif fresh and os.path.exists(flashp):
                 os.remove(flashp)
             src = flashp if os.path.exists(flashp) else binp
             net_args, network = self.network_for(image)
@@ -534,12 +558,14 @@ def make_handler(hub, emu, port, workdir):
                 return False
             return True
 
-        def _send(self, code, body, ctype='application/json'):
+        def _send(self, code, body, ctype='application/json', headers=()):
             self.send_response(code)
             self.send_header('Content-Type', ctype)
             self.send_header('Content-Length', str(len(body)))
             self.send_header('Cache-Control', 'no-store')
             self.send_header('X-Content-Type-Options', 'nosniff')
+            for key, value in headers:
+                self.send_header(key, value)
             if code >= 400:
                 self.close_connection = True  # unread rejected body must not become another request
                 self.send_header('Connection', 'close')
@@ -552,7 +578,8 @@ def make_handler(hub, emu, port, workdir):
         def do_GET(self):
             if not self._check():
                 return
-            path = urllib.parse.urlparse(self.path).path
+            u = urllib.parse.urlparse(self.path)
+            path = u.path
             if path in ('/', '/index.html'):
                 with open(page, 'rb') as f:
                     self._send(200, f.read(), 'text/html; charset=utf-8')
@@ -579,8 +606,45 @@ def make_handler(hub, emu, port, workdir):
                     self.close_connection = True
             elif path == '/api/state':
                 self._json(200, {'image': hub.snap.get('image'), 'profiles': list(PROFILES)})
+            elif path == '/api/flash':
+                self._download_flash(urllib.parse.parse_qs(u.query).get('sha', [''])[0])
             else:
                 self._send(404, b'not found\n', 'text/plain')
+
+        def _download_flash(self, sha):
+            """The image's saved flash as the emulator last wrote it (about every half second), or, before the
+            firmware wrote any, the image padded with erased bytes: the emulated flash either way."""
+            image = emu.image
+            if not sha and image:
+                sha = image['sha']
+            if not sha:
+                self._json(404, {'error': 'no image loaded'})
+                return
+            if not re.fullmatch(r'[0-9a-f]{64}', sha):
+                self._json(400, {'error': 'invalid sha'})
+                return
+            binp, flashp, metap = emu.paths(sha)
+            try:
+                with open(flashp, 'rb') as f:
+                    data = f.read()
+            except FileNotFoundError:
+                try:
+                    with open(binp, 'rb') as f:
+                        data = f.read()
+                except FileNotFoundError:
+                    self._json(404, {'error': 'no image with that sha'})
+                    return
+                data += b'\xff' * max(0, flash_size_from_header(data[3]) - len(data))
+            name = image['name'] if image and image['sha'] == sha else ''
+            if not name:
+                try:
+                    with open(metap, encoding='utf-8') as f:
+                        name = str(json.load(f).get('name', ''))
+                except (OSError, ValueError, AttributeError):
+                    pass
+            self._send(200, data, 'application/octet-stream',
+                       [('Content-Disposition', 'attachment; filename="%s"' % download_name(name)),
+                        ('Cross-Origin-Resource-Policy', 'same-origin')])
 
         def _body(self):
             lengths = self.headers.get_all('Content-Length', [])
@@ -618,16 +682,59 @@ def make_handler(hub, emu, port, workdir):
                 os.makedirs(d, exist_ok=True)
                 atomic_write(os.path.join(d, sha + '.elf'), body)
                 self._json(200, {'elf': sha})
+            elif u.path == '/api/flash':
+                # A saved flash waits here until /api/image?flash=<sha> boots it with its BIN.
+                why = check_saved_flash(body)
+                if why:
+                    self._json(400, {'error': why})
+                    return
+                sha = hashlib.sha256(body).hexdigest()
+                d = os.path.join(workdir, 'images')
+                os.makedirs(d, exist_ok=True)
+                staged = os.path.join(d, sha + '.flash-upload')
+                for old in glob.glob(os.path.join(d, '*.flash-upload')):   # one waits at a time
+                    if old != staged:
+                        try:
+                            os.remove(old)
+                        except OSError:
+                            pass
+                atomic_write(staged, body)
+                self._json(200, {'flash': sha})
             elif u.path == '/api/image':
                 if len(body) < 16 or body[0] != 0xE9:
                     self._json(400, {'error': 'not an ESP8266 flash image (first byte must be 0xE9): drop the '
                                               'firmware.bin that goes to flash address 0x0'})
                     return
+                fsize = flash_size_from_header(body[3])
+                flash, warning = None, None
+                if 'flash' in qs:
+                    flash_sha = qs['flash'][0]
+                    if re.fullmatch(r'[0-9a-f]{64}', flash_sha):
+                        staged = os.path.join(workdir, 'images', flash_sha + '.flash-upload')
+                        try:
+                            with open(staged, 'rb') as f:
+                                flash = f.read()
+                            os.remove(staged)
+                        except FileNotFoundError:
+                            pass
+                    if flash is None:
+                        self._json(400, {'error': 'the saved flash was not uploaded, or another one replaced it: '
+                                                  'drop the files again'})
+                        return
+                    if len(flash) != fsize:
+                        self._json(400, {'error': 'the saved flash is %s, but this image is built for %s of flash: '
+                                                  'drop the flash saved with this firmware'
+                                                  % (size_text(len(flash)), size_text(fsize))})
+                        return
+                    if flash[:2] != body[:2] or flash[3:len(body)] != body[3:]:    # byte 2, the flash mode, may differ
+                        warning = ('The saved flash does not start with this .bin: it comes from another build or an '
+                                   'OTA update, or esptool rewrote its header. The chip boots what the flash holds. '
+                                   'On the virtual network it halts unless that exact build was loaded with its .elf '
+                                   'before.')
                 name = os.path.basename(qs.get('name', ['firmware.bin'])[0])[:80]
                 sha = hashlib.sha256(body).hexdigest()
                 binp, flashp, metap = emu.paths(sha)
                 atomic_write(binp, body)
-                fsize = flash_size_from_header(body[3])
                 prof = qs.get('profile', [''])[0]
                 if prof not in PROFILES:
                     prof = DEFAULT_PROFILE
@@ -637,8 +744,11 @@ def make_handler(hub, emu, port, workdir):
                     elf = None
                 image = {'sha': sha, 'name': name, 'size': len(body), 'flash_size': fsize, 'profile': prof, 'elf': elf}
                 atomic_write(metap, json.dumps(image).encode('utf-8'))
-                emu.start(image, fresh=qs.get('fresh', ['0'])[0] == '1')
-                self._json(200, {'ok': True, 'sha': sha, 'profile': prof})
+                emu.start(image, fresh=qs.get('fresh', ['0'])[0] == '1', flash=flash)
+                reply = {'ok': True, 'sha': sha, 'profile': prof}
+                if warning:
+                    reply['warning'] = warning
+                self._json(200, reply)
             elif u.path == '/api/cmd':
                 try:
                     c = json.loads(body or b'{}')

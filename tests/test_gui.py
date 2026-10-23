@@ -89,7 +89,10 @@ class GuiTests(unittest.TestCase):
             h.headers[key] = val
         h.rfile = io.BytesIO(body)
         response = []
-        h._send = lambda status, data, *args: response.append((status, data))
+        def send(status, data, ctype='application/json', extra=()):
+            response.append((status, data))
+            self.sent_headers = dict(extra, **{'Content-Type': ctype})
+        h._send = send
         getattr(h, 'do_'+method)()
         return response[-1]
 
@@ -221,6 +224,100 @@ class GuiTests(unittest.TestCase):
         self.emu.stop()
         self.assertEqual(fp.read_bytes(),data)
 
+    IMAGE = b'\xe9\x00\x00\x20' + b'\x00' * 12    # header: 1 MiB of flash
+
+    def stage_flash(self, flash):
+        status, body = self.request(flash, '/api/flash')
+        self.assertEqual(status, 200, body)
+        return json.loads(body)['flash']
+
+    def test_dropped_flash_replaces_saved_flash_after_the_old_process_saves(self):
+        import hashlib
+        sha = hashlib.sha256(self.IMAGE).hexdigest()
+        bp, fp, _ = map(Path, self.emu.paths(sha))
+        bp.write_bytes(self.IMAGE); fp.write_bytes(b'stored credentials')
+        self.emu.start(dict(self.image, sha=sha))        # same image running: it writes its flash back on quit
+        self.assertTrue(self.ready.wait(2))
+        flash = self.IMAGE + b'\xff' * (0x100000 - len(self.IMAGE) - 8) + b'provided'
+        flash_sha = self.stage_flash(flash)
+        status, body = self.request(self.IMAGE, '/api/image?name=fw.bin&flash=' + flash_sha)
+        self.assertEqual(status, 200)
+        self.assertNotIn('warning', json.loads(body))
+        self.assertTrue(self.hub.snap['image']['flash_persisted'])
+        args = self.emu.proc.args
+        self.assertEqual(args[args.index('--flash') + 1], str(fp))
+        self.assertEqual(list(self.work.glob('images/*.flash-upload')), [])
+        self.emu.stop()
+        self.assertEqual(fp.read_bytes(), flash)      # what the fake emulator booted and saved
+        status, _ = self.request(b'{"cmd":"erase"}')  # Erase flash still starts over from the plain BIN
+        self.assertEqual(status, 200)
+        self.assertFalse(self.hub.snap['image']['flash_persisted'])
+        self.emu.stop()
+        self.assertEqual(fp.read_bytes(), self.IMAGE)
+
+    def test_saved_flash_must_fit_the_image(self):
+        import hashlib
+        fp = Path(self.emu.paths(hashlib.sha256(self.IMAGE).hexdigest())[1])
+        fp.write_bytes(b'stored credentials')
+        for flash, message in [(b'\x00' * 0x80000, 'first byte must be 0xE9'),
+                               (b'\xe9\x00\x00\x20' + b'\xff' * (0x80000 - 4), 'its header says 1 MB')]:
+            with self.subTest(message=message):
+                status, body = self.request(flash, '/api/flash')
+                self.assertEqual(status, 400)
+                self.assertIn(message, json.loads(body)['error'])
+        half = b'\xe9\x00\x00\x00' + b'\xff' * (0x80000 - 4)          # a whole 512 KiB flash
+        flash_sha = self.stage_flash(half)
+        status, body = self.request(self.IMAGE, '/api/image?flash=' + flash_sha)
+        self.assertEqual(status, 400)
+        self.assertIn('the saved flash is 512 KB, but this image is built for 1 MB', json.loads(body)['error'])
+        self.assertEqual(list(self.work.glob('images/*.flash-upload')), [])
+        for query in ('flash=' + flash_sha, 'flash=' + 'b' * 64, 'flash=../x'):
+            with self.subTest(query=query):
+                status, body = self.request(self.IMAGE, '/api/image?' + query)
+                self.assertEqual(status, 400)
+                self.assertIn('drop the files again', json.loads(body)['error'])
+        self.assertIsNone(self.emu.proc)
+        self.assertEqual(fp.read_bytes(), b'stored credentials')
+
+    def test_saved_flash_from_another_build_boots_with_a_warning(self):
+        other = b'\xe9\x00\x00\x20' + b'\x01' * 12 + b'\xff' * (0x100000 - 16)
+        status, body = self.request(self.IMAGE, '/api/image?flash=' + self.stage_flash(other))
+        self.assertEqual(status, 200)
+        self.assertIn('does not start with this .bin', json.loads(body)['warning'])
+        mode = bytearray(self.IMAGE + b'\xff' * (0x100000 - 16))
+        mode[2] = 3                                                    # esptool may change the flash mode
+        status, body = self.request(self.IMAGE, '/api/image?flash=' + self.stage_flash(bytes(mode)))
+        self.assertEqual(status, 200)
+        self.assertNotIn('warning', json.loads(body))
+
+    def test_upload_without_flash_resumes_saved_flash(self):
+        import hashlib
+        fp = Path(self.emu.paths(hashlib.sha256(self.IMAGE).hexdigest())[1])
+        fp.write_bytes(b'stored credentials')
+        status, _ = self.request(self.IMAGE, '/api/image?name=fw.bin&elf=')
+        self.assertEqual(status, 200)
+        self.assertTrue(self.hub.snap['image']['flash_persisted'])
+        self.emu.stop()
+        self.assertEqual(fp.read_bytes(), b'stored credentials')
+
+    def test_download_flash(self):
+        status, body = self.request(method='GET', path='/api/flash')
+        self.assertEqual(status, 404)
+        self.emu.image = dict(self.image, name='switch fw "v2".bin')
+        status, body = self.request(method='GET', path='/api/flash')
+        self.assertEqual(status, 200)                 # nothing saved yet: the image, padded like the emulator pads it
+        self.assertEqual(len(body), server.flash_size_from_header(self.bin.read_bytes()[3]))
+        self.assertEqual(body, self.bin.read_bytes().ljust(len(body), b'\xff'))
+        self.assertEqual(self.sent_headers['Content-Type'], 'application/octet-stream')
+        self.assertEqual(self.sent_headers['Content-Disposition'], 'attachment; filename="switch_fw__v2_.flash"')
+        self.flash.write_bytes(b'stored credentials')
+        status, body = self.request(method='GET', path='/api/flash?sha=' + self.image['sha'])
+        self.assertEqual((status, body), (200, b'stored credentials'))
+        for query, expected in (('b' * 64, 404), ('../x', 400)):
+            with self.subTest(query=query):
+                status, _ = self.request(method='GET', path='/api/flash?sha=' + query)
+                self.assertEqual(status, expected)
+
     def test_unrecognized_one_mib_image_defaults_to_generic_gpio(self):
         image = b'\xe9\x00\x00\x20' + b'\x00' * 12
         for name in ('unknown.bin', 'switch.bin', 'plug.bin', 'esp8285.bin'):
@@ -321,12 +418,14 @@ class GuiTests(unittest.TestCase):
                 self.assertEqual(actual,status)
 
     def test_origin_and_host_guards(self):
-        for method in ('GET','POST'):
+        self.emu.image=self.image
+        self.flash.write_bytes(b'stored credentials')
+        for method,path in (('GET','/api/state'),('POST','/api/state'),('GET','/api/flash'),('POST','/api/flash')):
             for headers in ([('Origin','http://foreign.invalid')],
                             [('Host','foreign.invalid')],
                             [('Origin','http://127.0.0.1:8276'),('Origin','http://foreign.invalid')]):
-                with self.subTest(method=method,headers=headers):
-                    status,_=self.request(method=method,path='/api/state',headers=headers)
+                with self.subTest(method=method,path=path,headers=headers):
+                    status,_=self.request(method=method,path=path,headers=headers)
                     self.assertEqual(status,403)
 
     def test_invalid_commands_return_json_error(self):
@@ -557,6 +656,28 @@ class GuiTests(unittest.TestCase):
                 self.assertEqual(self.emu.proc.args[0], self.emu.exe)
                 self.assertFalse([a for a in self.emu.proc.args if a.startswith('--net')])
                 self.assertTrue(self.hub.snap['fw']['network'].startswith(expected), self.hub.snap['fw']['network'])
+
+    def test_dropped_flash_boots_on_the_virtual_network(self):
+        # The profile is made from the plain BIN; the runner gets the whole saved flash, which holds that BIN.
+        import hashlib
+        self.auto_emulator()
+        status, body = self.request(b'\x7fELF test', '/api/elf')
+        elf_sha = json.loads(body)['elf']
+        flash_sha = self.stage_flash(self.IMAGE + b'\xff' * (0x100000 - len(self.IMAGE)))
+        with patch.object(server, 'check_image', return_value={}) as check, \
+             patch.object(server, 'build_profile', side_effect=self.fake_profile):
+            status, _ = self.request(self.IMAGE, '/api/image?name=fw.bin&elf=%s&flash=%s' % (elf_sha, flash_sha))
+            self.assertEqual(status, 200)
+            self.assertTrue(self.wait_for(lambda: self.station() == 'connected'))
+        sha = hashlib.sha256(self.IMAGE).hexdigest()
+        binp, flashp, _ = self.emu.paths(sha)
+        self.assertEqual(check.call_args[0][0], self.IMAGE)
+        args = self.emu.proc.args
+        self.assertEqual(args[0], self.emu.net['exe'])
+        self.assertEqual(args[args.index('--flash') + 1], flashp)
+        self.assertEqual(server.net_profile_digests(args[args.index('--net-profile') + 1]), {sha})
+        self.assertTrue(self.hub.snap['image']['flash_persisted'])
+        self.assertTrue(self.hub.snap['image']['net'])
 
     def test_missing_network_runner_shows_how_to_install_it(self):
         self.emu = server.Emulator(self.hub, str(self.work), self.emu.exe, 1, None, server.NO_RUNNER)
