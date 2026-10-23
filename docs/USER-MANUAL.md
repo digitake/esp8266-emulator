@@ -1,10 +1,14 @@
 # User manual
 
-This manual explains how to install the ESP8266 Emulator, load your own firmware
-and work with the web GUI, the headless runner and the report tools. It is written
-for people who have an ESP8266 firmware image and want to run, inspect or test it
-on a PC. For internals see [architecture](ARCHITECTURE.md); for the exact rules of
-firmware regression see [testing](TESTING.md).
+This manual explains how to install the ESP8266 Emulator, load firmware and work
+with the web GUI, the headless runner and the report tools. It is written for
+people who want to run, inspect or test ESP8266 firmware on a PC. For internals
+see [architecture](ARCHITECTURE.md); for the exact rules of firmware regression
+see [testing](TESTING.md).
+
+**New here?** Read sections 1 and 2, then run the bundled example as described in
+[section 2](#2-quick-start). The [glossary](#16-glossary) explains terms such as
+eboot, ELF and RTC memory.
 
 ## Contents
 
@@ -19,10 +23,11 @@ firmware regression see [testing](TESTING.md).
 9. [Run headless](#9-run-headless)
 10. [Scenario scripts](#10-scenario-scripts)
 11. [Debug firmware that does not boot](#11-debug-firmware-that-does-not-boot)
-12. [Reports, regression and OTA rehearsal](#12-reports-regression-and-ota-rehearsal)
+12. [Reports, regression and OTA tests](#12-reports-regression-and-ota-tests)
 13. [Privacy and local files](#13-privacy-and-local-files)
 14. [Troubleshooting](#14-troubleshooting)
 15. [Command summary](#15-command-summary)
+16. [Glossary](#16-glossary)
 
 ## 1. What the emulator does
 
@@ -35,13 +40,17 @@ With it you can:
 - drive GPIO inputs such as buttons, and see outputs such as relays and LEDs change;
 - reset, power-cycle or erase the emulated chip;
 - type into the serial port;
-- record repeatable execution reports and compare them exactly.
+- record repeatable execution reports and compare them exactly;
+- rehearse Arduino OTA updates, offline or over a virtual network.
 
 Know the limits before you start:
 
-- **No radio and no network.** Firmware can start a soft AP or scan, but nothing
-  can join it, scans find no access points, and station Wi-Fi, DHCP, MQTT, HTTP
-  and real OTA downloads do not work.
+- **No radio.** In the GUI and the default build there is no network at all.
+  Firmware can start a soft AP or scan, but nothing can join it and scans find no
+  access points. An experimental
+  [virtual network](#virtual-network-experimental) for headless runs gives
+  Arduino core 3.1.2 firmware a station connection through your host; it needs a
+  separate build and a profile made from the firmware's ELF.
 - **Idealized timing.** One instruction per cycle, ideal clocks and instant flash
   writes. It is a functional debugging tool, not a cycle-accurate or electrical
   board model.
@@ -50,11 +59,13 @@ Know the limits before you start:
   implemented; [section 11](#11-debug-firmware-that-does-not-boot) shows how to
   find out.
 
-No firmware, SDK library or ROM dump is included. You supply the image.
+No firmware, SDK library or ROM dump is included. You supply the image, or build
+the small example sketch in [examples/hello](../examples/hello).
 
 ## 2. Quick start
 
-On Linux, or in a WSL Ubuntu shell:
+On Linux, or in a WSL Ubuntu shell (see [section 3](#3-install-and-build) for
+installing the tools):
 
 ```sh
 git clone https://github.com/digitake/esp8266-emulator.git
@@ -72,6 +83,39 @@ cloned folder instead of the last command; it opens the browser for you:
 
 Press Ctrl+C in the terminal to stop the emulator.
 
+### Your first run with the example
+
+If you have no firmware at hand, build [examples/hello](../examples/hello) with
+[PlatformIO Core](https://docs.platformio.org/en/latest/core/installation/index.html).
+The project pins PlatformIO's `espressif8266@4.2.1` platform, which ships Arduino
+core 3.1.2. PlatformIO downloads the toolchain on the first build.
+
+```sh
+pio run -d examples/hello
+bash run-gui.sh --bin examples/hello/.pio/build/esp12e/firmware.bin \
+  --elf examples/hello/.pio/build/esp12e/firmware.elf \
+  --profile-file examples/gpio-profile.json
+```
+
+If PlatformIO is installed on Windows rather than in WSL, run `pio run` from
+PowerShell and start the GUI with `run-gui.ps1`, using the same paths with
+backslashes. Both sides see the same folder.
+
+What you should see:
+
+1. The Boot card steps through ROM, eboot, app, SDK, `setup()` and `loop()` within
+   about 0.13 emulated seconds.
+2. The console prints `hello from the emulator`, then `uptime 500 ms` twice a
+   second.
+3. The GPIO2 pad and the faceplate's LED ring blink. GPIO2 also appears in the
+   Signals card.
+4. Click the GPIO0 pad, which drives it LOW. The console prints `button pressed`
+   and GPIO5, the relay, turns HIGH. Click it twice more to release it.
+5. Type `hi` in *Send text to UART0 RX* and press Enter. The firmware answers
+   `you typed: hi`.
+
+The rest of this manual explains each of these steps in detail.
+
 ## 3. Install and build
 
 ### Requirements
@@ -81,6 +125,8 @@ Press Ctrl+C in the terminal to stop the emulator.
 | Operating system | Linux, or Windows 10/11 with WSL running Ubuntu |
 | Tools | GCC (GNU C11), GNU Make, Python 3.8 or later |
 | Browser | Any current browser on the same computer |
+| Optional, virtual network | `libslirp-dev`, `libglib2.0-dev` and `pkg-config`, only for `make network` |
+| Optional, example sketch | [PlatformIO Core](https://docs.platformio.org/en/latest/core/installation/index.html), only to build [examples/hello](../examples/hello) |
 
 No Python packages, Node.js or frontend build are needed. On Ubuntu, native or
 under WSL:
@@ -149,8 +195,9 @@ address **0x0**. Its first byte must be `0xE9`, the ESP8266 image header.
   tested.
 - A full flash read-back from a board is also a valid image. It brings that
   board's saved configuration, possibly including Wi-Fi credentials, with it.
-- The flash size comes from the image header. If the file is larger, its length
-  is used. The headless runner can override it with `--flash-size`.
+- The flash size comes from the image header. A file larger than that size is
+  refused. The headless runner can set another size with `--chip` or
+  `--flash-size` (see [chip and flash options](#chip-and-flash-options)).
 - ESP32-family images also start with `0xE9`, but they are not supported.
 
 ### The ELF file (optional, recommended)
@@ -377,10 +424,12 @@ The Network card shows what the SDK's own serial messages say about Wi-Fi:
 | soft AP | `-` until the SDK reports it; green with its IP when up (`add if1`, `dhcp server start`, `AP started`); `down` after `del if1` or `bcn 0` |
 | station | Idle, scanning or connection state from `scandone`, `connected with`, `ip:` and similar lines |
 | scans | Wi-Fi scans this boot |
-| host network | `unavailable: no host network bridge`; a host network bridge reports its state here |
+| host network | `unavailable: no host network bridge`. The GUI runs the offline build, so this is the only value today. |
 
 Hover a badge for the MAC addresses. The badges stay `-` if the firmware prints
-none of these messages.
+none of these messages. Nothing the GUI shows here is a real network: for firmware
+that must reach a broker or a web server, use the headless
+[virtual network](#virtual-network-experimental).
 
 ### Serial console
 
@@ -484,14 +533,20 @@ build/esp8266emu --flash /path/to/firmware.bin \
 ```
 
 This runs 10 emulated seconds as fast as possible and prints a summary on stderr.
-For a minimal synthetic image, the output looks like this; an Arduino image also
-reports `eboot`, `sdk`, `setup` and `loop`:
+For [examples/hello](../examples/hello) it looks like this:
 
 ```text
 stage rom at 0 us
-stage app at 0 us
-end: stage app, 1000000 us virtual, 80000000 insn, loop() 0, loop task 0
+stage eboot at 0 us
+stage app at 10 us
+stage sdk at 126572 us
+end: stage sdk, 10000228 us virtual, 800018294 insn, loop() 0, loop task 1697750
 ```
+
+About 30 `log: phy romfunc[N] called …, returns 0` lines appear among these. They
+are the SDK's radio calibration calls, and they are expected because there is no
+radio. Add `--sym-setup` and `--sym-loop` (see the table below) to see the
+`setup` and `loop` stages and count `loop()` calls.
 
 ### Serial monitor in the terminal
 
@@ -511,7 +566,9 @@ options at the end of this table are accepted as well.
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `--flash FILE` | required | Image to boot |
-| `--flash-size BYTES` | from header | Override the flash size; decimal or `0x` hex, such as `0x400000` |
+| `--chip NAME` | `esp8266` | Chip identity and default flash capacity; see [chip and flash options](#chip-and-flash-options) |
+| `--flash-size BYTES` | from header, or the `--chip` size | Override the flash size; decimal or `0x` hex, such as `0x400000` |
+| `--flash-id HEX` | derived from size | 24-bit JEDEC ID that the flash chip reports |
 | `--flash-out FILE` | none | Save flash writes to FILE periodically and at exit. To resume later, pass the same file as both `--flash` and `--flash-out`. |
 | `--speed X` | `1` | `1` real time, `0` as fast as possible, other values scale (`0.25`) |
 | `--max-seconds S` | no limit | Stop after S emulated seconds, counted from start across resets |
@@ -528,6 +585,7 @@ options at the end of this table are accepted as well.
 | `--mmiotrace LO:HI` | none | Log peripheral register accesses in a hex address range to stderr |
 | `--trace` | off | Verbose exception and interrupt logging |
 | `--profile FILE` | none | Write a sampled PC histogram at exit |
+| `--net-profile FILE`, `--net-forward`, `--net-host`, `--net-capture` | none | [Virtual network](#virtual-network-experimental); `build/esp8266emu-net` only |
 
 The runner continues until `--max-seconds` or `--until-loops` is reached, a `quit`
 command arrives, or stdin closes while commands are being read. With `--no-stdin`
@@ -596,30 +654,100 @@ synthetic image, shortened:
 
 ### Report file
 
-`--report FILE` writes a JSON summary at exit:
+`--report FILE` writes a JSON summary at exit. This one is from 2 emulated seconds
+of [examples/hello](../examples/hello) with `--sym-setup` and `--sym-loop`:
 
 ```json
 {
   "end": "quit",
   "halt": "",
-  "stage": "app",
+  "stage": "loop",
   "boots": 1,
-  "virtual_us": 1000000,
-  "instructions_since_boot": 80000000,
-  "loop_task_dispatches": 0,
-  "setup_calls": 0,
-  "loop_calls": 0,
-  "loop_calls_all_boots": 0,
-  "uart0_bytes": 117,
+  "virtual_us": 2000047,
+  "instructions_since_boot": 160003773,
+  "loop_task_dispatches": 322138,
+  "setup_calls": 1,
+  "loop_calls": 322137,
+  "loop_calls_all_boots": 322137,
+  "uart0_bytes": 467,
   "uart1_bytes": 0,
-  "uart0_bytes_on_wire": 117,
+  "uart0_bytes_on_wire": 467,
   "cpu_mhz": 80,
-  "flash_size": 1048576
+  "flash_size": 4194304,
+  "chip": "esp8266",
+  "flash_id": 1458415
 }
 ```
 
 `end` is `quit` or `halt`, `halt` holds the halt message, and `virtual_us` and the
-per-boot counters refer to the last boot.
+per-boot counters refer to the last boot. With `--net-profile`, the report also
+carries a `network` object with the station state and packet counts.
+
+### Chip and flash options
+
+By default the runner behaves as a plain ESP8266 and takes the flash size from the
+image header. `--chip` selects a module or package instead:
+
+| `--chip` | Flash capacity | Can `--flash-size` change it? |
+| --- | --- | --- |
+| `esp8266` | 4 MiB (only when `--chip` is given; otherwise the header decides) | Yes |
+| `esp12e`, `esp12f` | 4 MiB | Yes |
+| `esp8285` | 1 MiB embedded | No |
+| `esp8285h16` | 2 MiB embedded | No |
+
+`--flash-size` accepts a power of two from 256 KiB to 16 MiB, and an image larger
+than the capacity is refused. `--flash-id HEX` sets the JEDEC ID that the
+firmware reads from the flash chip. These options set identity and capacity
+only. They do not move addresses compiled into the image, so use the capacity
+the firmware was linked for. The GUI always uses the image header.
+
+### Virtual network (experimental)
+
+The default build has no network. A second runner, `build/esp8266emu-net`, gives
+firmware built with **Arduino core 3.1.2 and lwIP2** a Wi-Fi station connection.
+The guest's own TCP/IP stack runs unchanged. The emulator hands its Ethernet
+frames to a user-mode NAT on your host (libslirp), so the firmware can use DHCP,
+DNS, MQTT and HTTP. Point it at test services on your own computer. There is no
+radio, WPA, soft AP or scanning, and the GUI cannot use this runner yet.
+
+1. Install the extra packages and build the network runner:
+
+   ```sh
+   sudo apt install -y libslirp-dev libglib2.0-dev pkg-config
+   make network
+   ```
+
+2. Make a network profile from each image and its **matching** ELF. The profile
+   binds the adapter to that exact build, so regenerate it after every rebuild:
+
+   ```sh
+   python3 -I scripts/network_profile.py --core-version 3.1.2 \
+     --image /path/to/firmware.bin /path/to/firmware.elf \
+     --out /tmp/network-profile.txt
+   ```
+
+   Repeat `--image BIN ELF` to cover an OTA update image as well.
+
+3. Run with a positive speed; `--speed 1` is real time:
+
+   ```sh
+   build/esp8266emu-net --flash /path/to/firmware.bin \
+     --net-profile /tmp/network-profile.txt --speed 1 --max-seconds 30 \
+     --no-stdin --report /tmp/network-report.json
+   ```
+
+The guest gets address `10.0.2.15`. From the guest, your host is `10.0.2.2` and the
+DNS server is `10.0.2.3`.
+
+| Option | Effect |
+| --- | --- |
+| `--net-forward 8080:80` | Forward `127.0.0.1:8080` on the host to port 80 of the guest, for example to open its web server |
+| `--net-host broker.example.test=10.0.2.2` | Answer the guest's DNS query for that name with that address; up to 16 names |
+| `--net-capture /tmp/net.pcap` | Record every Ethernet frame for Wireshark. Captures can contain credentials. |
+
+Network runs depend on host timing, so they are not repeatable the way offline
+runs are. [Virtual networking](NETWORKING.md) describes the design and what has
+been tested.
 
 ## 10. Scenario scripts
 
@@ -665,8 +793,8 @@ Work through these steps in order:
    firmware used a ROM service the emulator lacks and received 0. If behavior goes
    wrong soon after, this is a likely cause. Run headless with `--strict` to halt
    at that exact point. Radio calibration calls are expected for SDK firmware,
-   because there is no radio; they appear only in the headless event stream, as
-   `phy romfunc[N] called …, returns 0`, and in `evidence.py` reports as
+   because there is no radio. They appear in headless output as
+   `phy romfunc[N] called …, returns 0` and in `evidence.py` reports as
    `phy_romfunc_slots_called`. The GUI hides them.
 4. **Check repeated boots.** Read the lines just before each `──── boot N` marker.
    Reset reason 4 means the hardware watchdog fired: the firmware ran without
@@ -748,12 +876,10 @@ python3 -I scripts/romcalls.py /path/to/firmware.elf /tmp/dis.txt /tmp/nm.txt
 Each line shows a ROM address, its symbol name, the number of call sites and the
 first few callers. Compare it with the `unimplemented ROM entry` messages.
 
-## 12. Reports, regression and OTA rehearsal
+## 12. Reports, regression and OTA tests
 
-> **"Profile" means three things.** In the headless runner, `--profile FILE` writes
-> a PC histogram. In the GUI launchers, `--profile-file`/`-ProfileFile` selects a
-> GPIO display profile. In `scripts/evidence.py`, `--profile LABEL` is only a label
-> stored in the report, while its `--profile-file` again names GPIO roles.
+> **"Profile" means several things.** See [profile](#16-glossary) in the glossary
+> before mixing `--profile`, `--profile-file`, `--net-profile` and `--chip`.
 
 ### Execution reports
 
@@ -842,17 +968,32 @@ running image's own eboot copied the update to 0x0 and that the new image boots.
 ```sh
 python3 -I scripts/ota_rehearsal.py \
   --running /path/to/running.bin --running-elf /path/to/running.elf \
-  --new /path/to/update.bin --expect 'new version marker' \
-  --out /tmp/ota-raw.json
+  --new /path/to/update.bin --new-elf /path/to/update.elf \
+  --expect 'new version marker' --out /tmp/ota-raw.json
 ```
 
-The running ELF must define `_FS_start`, as Arduino builds do. `--gzip` stages a
-compressed update, `--expect TEXT` requires the new image to print TEXT, and
-`--stage-at-ms` (default 1500) and `--seconds` (default 6) control timing. The
-tool prints `PASS` or `FAIL` and exits `0` only on PASS. If the update cannot fit
-beside the running image, it reports that Updater would refuse it. HTTP download
-and live Updater writes are **not** exercised; see
-[testing](TESTING.md#ota-copy-rehearsal).
+The running ELF must define `_FS_start`, as Arduino builds do. `--new-elf` lets the
+tool confirm that the new image reached `loop()`. `--gzip` stages a compressed
+update, `--expect TEXT` requires the new image to print TEXT, and `--stage-at-ms`
+(default 1500) and `--seconds` (default 6) control timing. The tool prints `PASS`
+or `FAIL` and exits `0` only on PASS. If the update cannot fit beside the running
+image, it reports that Updater would refuse it. HTTP download and live Updater
+writes are **not** exercised here; see [testing](TESTING.md#ota-copy-rehearsal).
+
+### Live network OTA test
+
+`scripts/network_check.py` runs a complete OTA over the
+[virtual network](#virtual-network-experimental). The firmware connects to a
+small local MQTT fixture, receives an update command, downloads the new image over
+HTTP with its own Updater, and reboots into it. `--method web` instead uploads the
+image to the firmware's web update page.
+
+The fixture speaks only the messages of the bundled reference sketch,
+[examples/network_reference](../examples/network_reference/reference.cpp), so this
+test runs that sketch rather than your own firmware. `scripts/build_reference.py`
+builds its A and B versions from a local Arduino core 3.1.2 and Xtensa toolchain.
+[Testing](TESTING.md#mqtt-triggered-http-ota) has the full commands and pass
+criteria.
 
 ## 13. Privacy and local files
 
@@ -889,7 +1030,14 @@ and live Updater writes are **not** exercised; see
 | `loop()` row shows loop-task runs | No ELF was loaded. Drop the `.bin` and `.elf` together. |
 | Console stops after the boot messages | The firmware may write to UART1 (violet), move TX to another pin (tick **off-wire output**), or not print at all. Tick **emulator log** for more detail. |
 | Boot counter keeps climbing | The firmware keeps resetting. Check the reset reason; 4 is the watchdog ([section 11](#11-debug-firmware-that-does-not-boot)). |
-| Wi-Fi never connects; station shows `scanned (no access point: the emulator has no radio)` | Expected: there is no radio or network ([section 1](#1-what-the-emulator-does)). |
+| Wi-Fi never connects; station shows `scanned (no access point: the emulator has no radio)` | Expected in the GUI and the default build, which have no network. For network tests use the headless [virtual network](#virtual-network-experimental). |
+| `pio: command not found` | PlatformIO is not installed on this side. Install [PlatformIO Core](https://docs.platformio.org/en/latest/core/installation/index.html), or build on Windows and run `run-gui.ps1` ([section 2](#your-first-run-with-the-example)). |
+| `flash: image is N bytes; flash capacity is M bytes` | The file is larger than the flash size in its header or the selected `--chip`. Use the image for address 0x0, or a larger `--flash-size`. |
+| `unknown chip profile: …` | Use one of `esp8266`, `esp12e`, `esp12f`, `esp8285`, `esp8285h16`. |
+| `network: networking needs libslirp: build with make network` | `--net-profile` was given to `build/esp8266emu`. Run `make network` and use `build/esp8266emu-net`. |
+| `Install libslirp-dev, libglib2.0-dev and pkg-config…` from `make network` | Install those packages: `sudo apt install -y libslirp-dev libglib2.0-dev pkg-config`. |
+| `network options require --net-profile` | `--net-forward`, `--net-host` and `--net-capture` only work together with `--net-profile`. |
+| `live networking requires a positive --speed (use 1)` | Network runs cannot use `--speed 0`. |
 | The `speed` readout stays below `1.00×` | The host cannot keep up in real time. The results are still valid; use `max` for long runs. |
 | Saved settings disappeared after a rebuild | A new build has a new SHA-256 and therefore fresh flash ([section 7](#7-resets-flash-and-saved-state)). |
 | `evidence.py: error: --seconds must be a finite positive number` | Pass a positive `--seconds` value. |
@@ -925,9 +1073,35 @@ python3 -I scripts/evidence.py --bin fw.bin --elf fw.elf --seconds 10 --out /tmp
 
 # Compare against reviewed references
 python3 -I scripts/regression.py --manifest fixtures/manifest.json --out /tmp/regression
+
+# Another chip or flash size
+build/esp8266emu --flash fw.bin --chip esp8285 --speed 0 --max-seconds 10 --no-stdin --quiet
+
+# Virtual network (experimental)
+make network
+python3 -I scripts/network_profile.py --core-version 3.1.2 --image fw.bin fw.elf --out net.txt
+build/esp8266emu-net --flash fw.bin --net-profile net.txt --speed 1 --net-forward 8080:80
 ```
 
 ```powershell
 # GUI from Windows
 .\run-gui.ps1 -Bin C:\path\fw.bin -Elf C:\path\fw.elf [-ProfileFile board.json] [-Port N]
 ```
+
+## 16. Glossary
+
+| Term | Meaning |
+| --- | --- |
+| Flash image, `.bin` | The complete contents of the flash chip from address 0x0, starting with the `0xE9` header byte. This is what the emulator boots. |
+| ELF, `.elf` | The linker output from the same build. The emulator reads only its symbol table, for example to find `setup()` and `loop()`. |
+| ROM | Code built into the ESP8266 that runs first and offers services to the firmware. The emulator implements these services in C; it contains no ROM dump. |
+| eboot | Arduino's bootloader at the start of the image. It starts the application, and copies a downloaded OTA update into place first. |
+| SDK | Espressif's NONOS SDK inside the firmware. It runs Wi-Fi, timers and the task loop that calls Arduino's `loop()`. |
+| GPIO | A general-purpose pin, numbered 0–16. GPIO6–11 connect to the flash chip and cannot be driven. |
+| UART0, UART1 | The serial ports. UART0 is the one a USB-serial adapter shows; UART1 can only transmit. |
+| RTC memory | A small memory that keeps its contents across a reset but not across a power cycle. eboot reads OTA commands from it. |
+| Watchdog | A hardware timer that resets the chip when firmware runs too long without yielding. Reset reason 4. |
+| Emulated time | Time as the firmware sees it. At `max` speed it runs faster than the clock on the wall. |
+| Scenario | A text file of timed commands, such as button presses, for repeatable runs ([section 10](#10-scenario-scripts)). |
+| Reference report | A reviewed `evidence.py` report that later runs are compared with exactly ([section 12](#12-reports-regression-and-ota-tests)). |
+| Profile | Five different things. A **GPIO profile** (`--profile-file`, `-ProfileFile`) names buttons, relays and LEDs for the GUI. A **chip profile** (`--chip`) sets chip identity and flash size. A **network profile** (`--net-profile`) binds the virtual network to one build. The runner's `--profile FILE` writes a CPU time histogram. `evidence.py --profile LABEL` is only a label stored in the report. |

@@ -17,7 +17,7 @@ not establish compatibility with every firmware that uses it.
 | Virtual station | Optional libslirp NAT, guest lwIP DHCP/DNS/TCP, station events and OFF/STA reconnects for Arduino 3.1.2/lwIP2 |
 | Minimal MAC | No-ACK completion for queues 0–7 through IRQ0, virtual TSF and one MAC timer |
 | Watchdog | Register-controlled feed, gating, interrupt stages and reset cause 4 |
-| GUI | Generic GPIO view, user-defined pin profiles, masked UART, loopback request guards and serialized process lifecycle |
+| GUI | ESP-12F pin view with input driving, boot timeline, signal trace, user-defined pin profiles, masked UART, loopback request guards and serialized process lifecycle |
 | Tools | Masked reports, regression manifests, offline eboot rehearsal and live MQTT/HTTP or station web-upload OTA checks |
 
 The source models were developed around Arduino core 3.1.2 and NONOS SDK
