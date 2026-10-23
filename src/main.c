@@ -1,6 +1,9 @@
 // esp8266emu: host side. Loads a flash image, boots it through the open ROM, streams what the chip does as
 // JSON lines on stdout and takes commands on stdin (see README "Event protocol").
 #include "emu.h"
+#include "net.h"
+#include "net_profile.h"
+#include "host_net.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -10,6 +13,7 @@
 #include <time.h>
 #include <errno.h>
 #include <signal.h>
+#include <math.h>
 
 static uint64_t total_us(void);
 
@@ -126,6 +130,7 @@ static const char *stage_name(int s)
 void ev_stage(int stage)
 {
     E.stage = stage;
+    if (stage == STAGE_APP) net_profile_app();
     ev_printf("{\"t\":\"stage\",\"s\":\"%s\",\"boot\":%llu,\"reason\":%d,\"vt_us\":%llu,\"t_us\":%llu,\"insn\":%llu}",
               stage_name(stage), (unsigned long long)E.boot_count, E.reset_reason,
               (unsigned long long)now_us(), (unsigned long long)total_us(), (unsigned long long)(E.cycles - E.boot_cycles));
@@ -338,6 +343,11 @@ static void run_script(void)
 void host_service(void)
 {
     uint64_t nowns = wall_ns();
+    if (net_is_enabled()) {
+        net_poll_host();
+        net_stats_t stats = net_get_stats();
+        if (stats.rx_pending || stats.tx_pending) rom_wake_scheduler();
+    }
     if (profile_path) prof_sample(C.waiting ? 1 : C.pc);
     if (script_i < script_n) run_script();
     if (max_vsec > 0 && total_us() >= (uint64_t)(max_vsec * 1e6)) longjmp(E.reset_jmp, RJ_QUIT);
@@ -448,12 +458,22 @@ static void write_report(const char *why)
                "  \"setup_calls\": %llu,\n  \"loop_calls\": %llu,\n  \"loop_calls_all_boots\": %llu,\n"
                "  \"uart0_bytes\": %llu,\n  \"uart1_bytes\": %llu,\n"
                "  \"uart0_bytes_on_wire\": %llu,\n  \"cpu_mhz\": %u,\n  \"flash_size\": %u,\n"
-               "  \"chip\": \"%s\",\n  \"flash_id\": %u\n}\n",
+               "  \"chip\": \"%s\",\n  \"flash_id\": %u",
             why, e, stage_name(E.stage), (unsigned long long)E.boot_count, (unsigned long long)now_us(),
             (unsigned long long)(E.cycles - E.boot_cycles), E.loop_dispatches, (unsigned long long)E.setup_calls,
             (unsigned long long)E.loop_calls, (unsigned long long)E.loop_total, (unsigned long long)uart_total[0],
             (unsigned long long)uart_total[1], (unsigned long long)uart_wire[0], E.cpu_mhz, E.flash_size,
             E.chip_profile ? E.chip_profile->name : "esp8266", E.flash_id);
+    if (net_profile_requested()) {
+        net_stats_t stats = net_get_stats();
+        fprintf(f, ",\n  \"network\": {\"virtual_station\": true, \"connected\": %s, "
+                   "\"ip\": %u, \"tx_packets\": %llu, \"rx_packets\": %llu, "
+                   "\"tx_rejected\": %llu, \"rx_dropped\": %llu}",
+                stats.connected ? "true" : "false", stats.ip,
+                (unsigned long long)stats.tx_packets, (unsigned long long)stats.rx_packets,
+                (unsigned long long)stats.tx_rejected, (unsigned long long)stats.rx_dropped);
+    }
+    fputs("\n}\n", f);
     fclose(f);
 }
 
@@ -464,6 +484,9 @@ static void usage(void)
         "  --chip NAME            esp8266, esp12e, esp12f, esp8285, esp8285h16\n"
         "  --flash-size BYTES     set physical capacity (fixed for ESP8285 profiles)\n"
         "  --flash-id HEX         set the 24-bit JEDEC flash ID\n"
+        "  --net-profile FILE     opt-in image-bound Arduino 3.1.2 virtual station\n"
+        "  --net-forward HOST:GUEST   forward a loopback TCP port to 10.0.2.15\n"
+        "  --net-capture FILE     write raw Ethernet packets to a PCAP file\n"
         "  --flash-out FILE       persist flash writes (config, OTA) to FILE\n"
         "  --speed X              1 = real time (default), 0 = as fast as possible\n"
         "  --max-seconds S        stop after S seconds of emulated time\n"
@@ -480,6 +503,8 @@ static void usage(void)
 int main(int argc, char **argv)
 {
     uint32_t forced_size = 0, forced_id = 0;
+    const char *network_profile = NULL, *network_capture = NULL;
+    unsigned forwards[16][2], forward_count = 0;
     signal(SIGPIPE, SIG_IGN);
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i];
@@ -502,6 +527,16 @@ int main(int argc, char **argv)
             }
             i++;
         }
+        else if (!strcmp(a, "--net-profile") && v) { network_profile = v; i++; }
+        else if (!strcmp(a, "--net-capture") && v) { network_capture = v; i++; }
+        else if (!strcmp(a, "--net-forward") && v) {
+            char extra;
+            if (forward_count == 16 || sscanf(v, "%u:%u%c", &forwards[forward_count][0],
+                                               &forwards[forward_count][1], &extra) != 2) {
+                fprintf(stderr, "network forwarding requires HOST_PORT:GUEST_PORT\n"); return 2;
+            }
+            forward_count++; i++;
+        }
         else if (!strcmp(a, "--flash-out") && v) { flash_out = v; i++; }
         else if (!strcmp(a, "--speed") && v) { speed = atof(v); i++; }
         else if (!strcmp(a, "--max-seconds") && v) { max_vsec = atof(v); i++; }
@@ -523,6 +558,23 @@ int main(int argc, char **argv)
     }
     if (!flash_path) usage();
     load_flash(forced_size, forced_id);
+    if (!network_profile && (network_capture || forward_count)) {
+        fprintf(stderr, "network options require --net-profile\n"); return 2;
+    }
+    if (network_profile) {
+        char error[256];
+        if (!isfinite(speed) || speed <= 0) {
+            fprintf(stderr, "live networking requires a positive --speed (use 1)\n"); return 2;
+        }
+        if (!net_profile_load(network_profile, error, sizeof error) ||
+            !host_net_open(network_capture, error, sizeof error)) {
+            fprintf(stderr, "network: %s\n", error); return 2;
+        }
+        for (unsigned i = 0; i < forward_count; i++)
+            if (!host_net_forward(forwards[i][0], forwards[i][1], error, sizeof error)) {
+                fprintf(stderr, "network: %s\n", error); return 2;
+            }
+    }
     if (uart_log_path) uart_log = fopen(uart_log_path, "wb");
     rom_init();
     wall_ref_ns = stat_ns_ref = wall_ns();
@@ -550,9 +602,15 @@ int main(int argc, char **argv)
         if (quiet) fprintf(stderr, "end: stage %s, %llu us virtual, %llu insn, loop() %llu, loop task %u\n",
                            stage_name(E.stage), (unsigned long long)now_us(), (unsigned long long)(E.cycles - E.boot_cycles),
                            (unsigned long long)E.loop_calls, E.loop_dispatches);
-        return 0;
+        {
+            bool failed = net_profile_requested() && halt_msg[0];
+            net_profile_close();
+            host_net_close();
+            return failed ? 1 : 0;
+        }
     }
     E.boot_count++;
+    net_profile_reset(E.boot_count);
     E.call_depth = 0;
     E.fault_jmp = NULL;
     E.boot_cycles = E.cycles;

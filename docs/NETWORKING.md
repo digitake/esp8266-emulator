@@ -1,10 +1,47 @@
-# Network feasibility
+# Virtual networking
 
-Host networking is a design proposal, not an implemented feature. The current
-MAC model completes selected no-ACK transmissions and exposes a virtual timer.
-It provides neither station association nor a host Ethernet interface.
+An optional libslirp backend and Arduino core 3.1.2/lwIP2 adapter connect guest
+Ethernet frames to the host. This is an experimental virtual station: the guest
+still runs its own TCP/IP and application protocols, while the adapter supplies
+station state and Wi-Fi events. It does not emulate radio association or RF.
 
-For firmware built with Arduino core 3.1.2 and lwIP2, a plausible boundary is
+The default build stays offline. Build the network runner on Linux or WSL with
+the `libslirp-dev` and `pkg-config` packages installed:
+
+```sh
+make network
+make check-network-backend
+python3 -I scripts/network_profile.py --core-version 3.1.2 \
+  --image /path/to/current.bin /path/to/current.elf \
+  --image /path/to/update.bin /path/to/update.elf \
+  --out /tmp/network-profile.txt
+build/esp8266emu-net --flash /path/to/current.bin \
+  --net-profile /tmp/network-profile.txt --speed 1 --max-seconds 30 \
+  --no-stdin --report /tmp/network-report.json
+```
+
+Every image needs its matching unstripped ELF. The profile generator checks
+executable bytes and Arduino CRC fields before using its symbols. The runner
+matches the actual application bytes after eboot and binds that image's hooks.
+An unknown update image stops execution instead of reusing old addresses.
+Persistent configuration beyond the BIN is excluded from image matching.
+
+Live networking requires positive speed; start with `--speed 1`. The backend
+uses host time while CPU and peripheral timers use guest time. Live network
+runs are separate from the exact deterministic offline regression checks.
+
+The guest NAT subnet is `10.0.2.0/24`, with host access at `10.0.2.2`, DNS at
+`10.0.2.3` and the first DHCP lease at `10.0.2.15`. To reach a station-mode guest
+web server, add `--net-forward 8080:80` and open `http://127.0.0.1:8080/`.
+Forwarded ports bind to loopback. `--net-capture /tmp/network.pcap` records raw
+Ethernet packets for inspection; captures may contain application credentials.
+
+The adapter currently models one station interface. SoftAP recovery, RF/WPA
+behavior, sleep transitions and arbitrary SDK versions are not established.
+Blocking network operations inside injected Wi-Fi event callbacks are not
+supported; normal application-loop MQTT processing is the first target.
+
+For firmware built with Arduino core 3.1.2 and lwIP2, the implemented boundary is
 the glue between lwIP and the closed SDK. Hook Ethernet output before
 `eagle_lwip_if` / `ieee80211_output_pbuf`, and inject receive frames through the
 paired glue entry points. The real guest stack, sockets and application would
@@ -42,10 +79,9 @@ reset with outstanding work and allocation failures for leaks or double frees.
 
 Run guest callbacks at a safe scheduler point outside active interrupts and
 recursive output calls. Associate queued work with a boot generation and discard
-stale work after reset. Validate all guest pointers and lengths. The current
-`guest_call` helper passes six register arguments; a direct call to the
-seven-argument `esp2glue_netif_update` needs CALL0 stack-argument support or an
-existing SDK caller that supplies the complete ABI.
+stale work after reset. Validate all guest pointers and lengths. The
+`guest_call` helper passes six register arguments and places remaining words
+in a saved, aligned CALL0 stack area, including the seventh netif argument.
 
 ## Association and host backend
 
@@ -54,10 +90,9 @@ coherent SSID/BSSID/channel and synthetic RSSI, deliver connected/got-IP events,
 and handle disconnect/reconnect queries. Applications may check both connection
 state and saved configuration. These transitions need verification for each SDK.
 
-A user-mode NAT backend is a practical first candidate: it can expose an isolated
-Ethernet segment with DHCP and DNS while the guest runs its own protocols. TAP
-requires host network configuration and privileges. Backend dependencies and
-packaging remain undecided. Keep the GUI loopback-only and use local test services.
+The optional libslirp user-mode NAT backend supplies DHCP and DNS while the guest
+runs its own protocols. TAP is not implemented. Keep the GUI loopback-only and
+use local test services for repeatable integration checks.
 
 This approach would not test WPA authentication/encryption, RF contention,
 acknowledgments/retries, real AP interoperability, roaming, radio sleep or measured
@@ -66,9 +101,9 @@ asynchronous timing; retain deterministic offline tests separately.
 
 ## Prototype acceptance
 
-A first prototype for one identified SDK/image is a multi-day task; a rough
-2–4 day estimate covers the Ethernet backend, ownership, association transitions
-and MQTT/OTA validation. General support across SDKs needs additional work.
+Compatibility must be demonstrated for each identified SDK/image. Backend and
+queue unit tests alone do not establish firmware compatibility. The required
+integration checks are:
 
 1. Establish the guest interface and obtain DHCP/DNS through its actual stack.
    Record packet traces and masked application output.

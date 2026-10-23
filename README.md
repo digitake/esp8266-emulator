@@ -106,12 +106,14 @@ For repeatable firmware checks, supply your own images and references through a
 
 The implementation includes GPIO/UART/timers, NOR flash operations, interrupt
 and exception handling, a task scheduler and a hardware watchdog. Minimal
-no-ACK MAC completion and a MAC timer support selected SDK paths. They do not
-provide a radio or host network connection.
+no-ACK MAC completion and a MAC timer support selected SDK paths. These models
+do not provide a radio.
 
-Station connectivity, DHCP networking, MQTT and real HTTP/Updater OTA are not
-implemented. The OTA rehearsal tool injects staged bytes and a boot command,
-then exercises a compatible image's eboot copy. It does not download an update.
+The default build is offline. An optional [virtual station](docs/NETWORKING.md)
+connects image-bound Arduino 3.1.2/lwIP2 firmware to a host NAT backend. This
+experimental adapter needs matching BIN/ELF profiles; compatibility with other
+SDKs, SoftAP and physical radio behavior is not established. The separate OTA
+rehearsal tool injects staged bytes and a boot command to test eboot copying.
 
 Timing assumes one cycle per instruction and instantaneous flash operations.
 This is a functional debugging tool, not a cycle-accurate or electrical board
