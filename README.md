@@ -1,20 +1,55 @@
 # ESP8266 Emulator
 
-A source-based ESP8266/LX106 emulator with a local web interface for inspecting
-firmware execution, UART output and GPIO. Load your own flash image, drive inputs,
-observe pin transitions and capture repeatable execution reports.
+[![Build and test](https://github.com/digitake/esp8266-emulator/actions/workflows/ci.yml/badge.svg)](https://github.com/digitake/esp8266-emulator/actions/workflows/ci.yml)
 
-The emulator combines an Xtensa LX106 interpreter, C implementations of ROM
-services and peripheral register models. It targets CALL0 firmware and E9-format
-flash images, including Arduino/NONOS SDK boot flows. Compatibility is incomplete;
-an unfamiliar image may need additional ROM or peripheral support. Firmware, SDK
-libraries and mask-ROM dumps are not included.
+Run ESP8266 firmware on your PC without a board. The emulator boots an unmodified
+`firmware.bin`, shows its serial output, and lets you press its buttons and watch
+its pins change. It can also record repeatable test reports.
+
+![The emulator GUI running examples/hello](docs/images/gui.png)
+
+*The GUI running [examples/hello](examples/hello): a live drawing of the module
+with every pin, a faceplate for the button, relay and LED, and the serial console.*
+
+## Is it for you?
+
+Use it to:
+
+- find out why firmware crashes or keeps resetting, without flashing a board;
+- test buttons, relays and LEDs with exact, repeatable timing;
+- check that firmware still behaves the same after a change;
+- rehearse Arduino OTA updates.
+
+Know its limits:
+
+- **ESP8266 only**, not ESP32. Developed around Arduino core 3.1.2 and the
+  NONOS SDK. Other firmware may call ROM functions that are not implemented yet.
+- **No radio.** The GUI runs offline, so Wi-Fi scans find nothing. An
+  experimental [virtual network](docs/NETWORKING.md) for headless runs can connect
+  Arduino 3.1.2 firmware to your host.
+- **Idealized timing.** It counts one instruction per cycle and treats flash
+  writes as instant. It is a functional debugger, not a cycle-accurate or
+  electrical model.
+- **Bring your own firmware.** No firmware, SDK or ROM dump is included. A small
+  example sketch is.
 
 ## Quick start
 
-Use Linux or WSL Ubuntu with **GCC, GNU Make and Python 3**. The interpreter uses
-GNU C11 extensions; the GUI and Python tools use the standard library. No Python
-packages or frontend build are required.
+### 1. Install the tools
+
+You need Linux, or Windows 10/11 with WSL running Ubuntu, plus GCC, Make and
+Python 3. On Ubuntu:
+
+```sh
+sudo apt update
+sudo apt install -y build-essential python3 git
+```
+
+On Windows, first run `wsl --install -d Ubuntu` in an administrator PowerShell,
+then open the Ubuntu app and run the commands above. No Python packages, Node.js
+or frontend build are needed.
+
+### 2. Build and self-test
 
 ```sh
 git clone https://github.com/digitake/esp8266-emulator.git
@@ -23,121 +58,130 @@ make
 make check
 ```
 
-`make check` runs CPU/peripheral sanitizer tests, Python tests and a synthetic
-watchdog test. It needs no external firmware or network service.
+`make check` uses no firmware. It ends with
+`watchdog busy-loop evidence: PASS`.
 
-Start the GUI from Linux or WSL:
+### 3. Get a firmware image
+
+The emulator boots the complete image that would be written at flash address
+0x0. PlatformIO writes it to `.pio/build/<env>/firmware.bin`. Keep the matching
+`firmware.elf` from the same build: with it the GUI shows when `setup()` and
+`loop()` start.
+
+If you have no firmware yet, build the example with
+[PlatformIO Core](https://docs.platformio.org/en/latest/core/installation/index.html):
 
 ```sh
-bash run-gui.sh
+pio run -d examples/hello
 ```
 
-Open **http://127.0.0.1:8266/** and drop in a `firmware.bin` intended for flash
-address zero. Include its matching `firmware.elf` for symbol-based Arduino
-`setup()` and `loop()` counts. To select an image at startup:
+The example prints to the serial port, blinks GPIO2, switches GPIO5 while GPIO0
+is held LOW, and echoes what you type.
+
+### 4. Start the GUI
+
+From Linux or the Ubuntu shell:
 
 ```sh
-bash run-gui.sh --bin /path/to/firmware.bin --elf /path/to/firmware.elf
+bash run-gui.sh --bin examples/hello/.pio/build/esp12e/firmware.bin \
+  --elf examples/hello/.pio/build/esp12e/firmware.elf \
+  --profile-file examples/gpio-profile.json
 ```
 
-From Windows PowerShell:
+Then open **http://127.0.0.1:8266/**. From Windows PowerShell, in the cloned
+folder, use this instead. It builds and runs inside WSL and opens the browser:
 
 ```powershell
-.\run-gui.ps1 -Bin C:\path\to\firmware.bin -Elf C:\path\to\firmware.elf
+.\run-gui.ps1 -Bin examples\hello\.pio\build\esp12e\firmware.bin `
+  -Elf examples\hello\.pio\build\esp12e\firmware.elf `
+  -ProfileFile examples\gpio-profile.json
 ```
 
-The Windows launcher builds and runs inside WSL Ubuntu and opens the browser.
-Use `-Distro <name>` to select another distribution, or `-Port 8276` if the
-default port is occupied. Ctrl+C stops the server.
+Things to try:
 
-## GPIO and firmware inspection
+- Click the **GPIO0** pad. The console prints `button pressed`, and GPIO5 goes HIGH.
+- Type `hi` into the box under the console. The firmware answers `you typed: hi`.
+- Press **Reset**, then **Power cycle**, and watch the Boot card's reset history.
 
-The GUI draws an ESP-12F module with every pad in place, showing each GPIO's
-level and mode live. Click a pad to drive an input LOW, HIGH or release it;
-hover it for its role, level and edge count. A Signals card shows recent pin
-edges as a logic-analyzer trace. An optional
-[GPIO profile](examples/gpio-profile.json) assigns your own button, relay and
-LED roles for a faceplate above the module:
+Run `bash run-gui.sh` without `--bin` and drag any `.bin` and `.elf` onto the
+page instead. Press Ctrl+C in the terminal to stop it.
 
-```sh
-bash run-gui.sh --profile-file /path/to/gpio-profile.json
+## What the GUI shows
+
+| Part | What it gives you |
+| --- | --- |
+| Header | Image name and hash, emulated time, speed (1×, ¼× or max), MIPS, boot count, current stage |
+| Board | ESP-12F drawing with each pin's live level and mode. Click a pad to drive it LOW, HIGH or release it. |
+| Boot | ROM → eboot → app → SDK → `setup()` → `loop()` timeline, and the reason for every reset |
+| Signals | Logic-analyzer trace of recent pin changes |
+| Network | Soft AP and station state, as reported by the firmware |
+| Serial console | UART output with credentials masked; send text to the firmware |
+
+The **Reset**, **Power cycle** and **Erase flash** buttons act like the real
+thing. Flash contents the firmware saves, such as settings, survive restarts.
+See [Use the GUI](docs/USER-MANUAL.md#6-use-the-gui) for every control.
+
+## Beyond the GUI
+
+| I want to… | Start with | Read more |
+| --- | --- | --- |
+| Run in a terminal or CI | `build/esp8266emu --flash fw.bin --speed 0 --max-seconds 10 --no-stdin --quiet` | [Run headless](docs/USER-MANUAL.md#9-run-headless) |
+| Press buttons at exact times | A scenario file: `1000 in 0 0` drives GPIO0 LOW at 1 s | [Scenario scripts](docs/USER-MANUAL.md#10-scenario-scripts) |
+| Find why a boot fails | The Boot card, the **emulator log** toggle, `--strict` | [Debug a boot](docs/USER-MANUAL.md#11-debug-firmware-that-does-not-boot) |
+| Prove nothing changed | `scripts/evidence.py`, then `scripts/regression.py` | [Reports and regression](docs/USER-MANUAL.md#12-reports-regression-and-ota-tests) |
+| Test an OTA update | `scripts/ota_rehearsal.py` with your own images, offline | [OTA tests](docs/USER-MANUAL.md#12-reports-regression-and-ota-tests) |
+| Give firmware a network | `make network`, then `build/esp8266emu-net --net-profile …` | [Virtual network](docs/USER-MANUAL.md#virtual-network-experimental) |
+| Emulate an ESP8285 or a given flash size | `--chip esp8285` or `--flash-size 0x200000` | [Chip and flash](docs/USER-MANUAL.md#chip-and-flash-options) |
+
+## How it works
+
+```mermaid
+flowchart LR
+    image["firmware.bin + .elf"] --> emu
+    subgraph emu ["build/esp8266emu"]
+        cpu["LX106 CPU interpreter"] --> rom["ROM services written in C"]
+        cpu --> io["GPIO, UART, timers, flash, watchdog"]
+    end
+    emu -->|"JSON events (stdout)"| server["gui/server.py"]
+    server -->|"commands (stdin)"| emu
+    server -->|"live events, 127.0.0.1 only"| page["browser: gui/index.html"]
+    page -->|"clicks and uploads"| server
 ```
 
-Use `-ProfileFile C:\path\to\gpio-profile.json` with the Windows launcher.
-A profile changes the display and input mapping; application behavior remains
-in the firmware.
+The firmware runs instruction by instruction, exactly as it was built. The
+emulator stands in for the chip's mask ROM and its peripherals; it never patches
+the image. The GUI server only listens on 127.0.0.1 and refuses other host names.
+[Architecture](docs/ARCHITECTURE.md) has the details.
 
-The GUI also provides the live UART console, a boot timeline with reset
-history, Wi-Fi state badges, reset/power/erase controls and speed selection.
-Known credential fields are masked before GUI output. Firmware configuration
-persists in a flash file per uploaded image.
+## Repository layout
 
-The server binds **127.0.0.1 only**, validates Host and Origin, and caps uploads
-at 16 MiB. Images are stored by SHA-256 under
-`~/.cache/esp8266-emulator/images/`. Use `--workdir /path/to/cache` with the Linux
-launcher for an isolated session.
+| Folder | Contents |
+| --- | --- |
+| `src/` | The emulator in C: CPU, ROM services, peripherals, networking adapter |
+| `gui/` | Local web server (Python standard library) and the single-page GUI |
+| `scripts/` | Reports, regression, OTA, profiling and symbol tools |
+| `tests/` | C and Python tests run by `make check` |
+| `examples/` | The hello sketch, a GPIO profile and a regression manifest |
+| `scenarios/` | A sample timed-input script |
+| `docs/` | Manual, scope, architecture, testing and networking notes |
 
-## Headless use
+## Documentation
 
-```sh
-build/esp8266emu --flash /path/to/firmware.bin \
-  --speed 0 --max-seconds 10 --no-stdin --quiet
-```
+1. [User manual](docs/USER-MANUAL.md): start here. Install, GUI, headless runs,
+   debugging, troubleshooting and a glossary.
+2. [Current scope](docs/STATUS.md): what is implemented and what is not.
+3. [Testing](docs/TESTING.md): regression fixtures, OTA tests and performance.
+4. [Virtual networking](docs/NETWORKING.md): the experimental network adapter.
+5. [Architecture](docs/ARCHITECTURE.md): how the emulator works inside, and its event protocol.
+6. [Board comparison](docs/BOARD-COMPARISON.md): comparing against a physical board.
 
-Select physical chip and flash settings with `--chip esp8266`, `esp12e`,
-`esp12f`, `esp8285` (1 MiB) or `esp8285h16` (2 MiB). External-flash profiles
-default to 4 MiB and accept `--flash-size BYTES`; embedded-flash profiles have
-fixed capacity. `--flash-id HEX` selects the flash chip's 24-bit JEDEC ID.
-Without `--chip`, the emulator uses ESP8266 identity and the image header's
-flash capacity. An image larger than the selected capacity is rejected.
-These profiles set identity and capacity; they do not establish support for
-every peripheral or firmware built for that chip.
+## Contributing
 
-Capture a masked report with input hashes, execution counts and pin edges:
-
-```sh
-python3 -I scripts/evidence.py \
-  --bin /path/to/firmware.bin --elf /path/to/firmware.elf \
-  --seconds 10 --out /tmp/boot.json
-```
-
-For repeatable firmware checks, supply your own images and references through a
-[regression manifest](examples/regression-manifest.json). See
-[testing and evidence](docs/TESTING.md) for the workflow.
-
-## Scope and limitations
-
-The implementation includes GPIO/UART/timers, NOR flash operations, interrupt
-and exception handling, a task scheduler and a hardware watchdog. Minimal
-no-ACK MAC completion and a MAC timer support selected SDK paths. These models
-do not provide a radio.
-
-The default build is offline. An optional [virtual station](docs/NETWORKING.md)
-connects image-bound Arduino 3.1.2/lwIP2 firmware to a host NAT backend. This
-experimental adapter needs matching BIN/ELF profiles; compatibility with other
-SDKs, SoftAP and physical radio behavior is not established. The bundled
-[network OTA test](docs/TESTING.md#mqtt-triggered-http-ota) exercises MQTT-triggered
-HTTP updates and station web uploads with raw or gzip images, saved settings,
-eboot and a new application boot. The separate offline rehearsal injects staged
-bytes and a boot command to test eboot copying.
-
-Timing assumes one cycle per instruction and instantaneous flash operations.
-This is a functional debugging tool, not a cycle-accurate or electrical board
-model. Physical-board timing has not been validated.
-
-## Project guide
-
-- [User manual](docs/USER-MANUAL.md): installation, GUI, headless runs, scenarios,
-  debugging and troubleshooting
-- [Current scope](docs/STATUS.md) and [architecture/event protocol](docs/ARCHITECTURE.md)
-- [Testing, regression fixtures and performance](docs/TESTING.md)
-- [Virtual networking](docs/NETWORKING.md) and [physical-board comparison](docs/BOARD-COMPARISON.md)
-- [Contributing](CONTRIBUTING.md) and [reference notices](NOTICE.md)
-
-Source lives in `src/`, the local interface in `gui/`, command-line tools in
-`scripts/`, synthetic tests in `tests/`, and reusable input examples in `examples/`.
+Bug reports and fixes are welcome. Run `make check` before you send a change,
+and see [CONTRIBUTING.md](CONTRIBUTING.md) for what a good report includes.
+Keep firmware, flash files and credentials out of issues and commits.
 
 ## License
 
-[MIT](LICENSE). User-supplied firmware, SDKs and toolchains retain their own
-licenses; this project's license does not relicense those inputs.
+[MIT](LICENSE). Firmware, SDKs and toolchains you use with the emulator keep
+their own licenses. See [NOTICE.md](NOTICE.md) for reference material.
