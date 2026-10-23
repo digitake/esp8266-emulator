@@ -116,10 +116,10 @@ synthetic watchdog test. It needs no firmware or network. A passing run ends lik
 this:
 
 ```text
-python3 -I tests/test_tools.py
-..........
+python3 -I tests/test_runner.py
+..
 ----------------------------------------------------------------------
-Ran 10 tests in 0.042s
+Ran 2 tests in 0.189s
 
 OK
 python3 -I scripts/watchdog_check.py --out build/watchdog-check.json
