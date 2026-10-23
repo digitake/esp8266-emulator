@@ -4,6 +4,7 @@
 #include "net.h"
 #include "net_profile.h"
 #include "host_net.h"
+#include "host_dns.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -487,6 +488,7 @@ static void usage(void)
         "  --net-profile FILE     opt-in image-bound Arduino 3.1.2 virtual station\n"
         "  --net-forward HOST:GUEST   forward a loopback TCP port to 10.0.2.15\n"
         "  --net-capture FILE     write raw Ethernet packets to a PCAP file\n"
+        "  --net-host NAME=IP     override a guest DNS A record for a test server\n"
         "  --flash-out FILE       persist flash writes (config, OTA) to FILE\n"
         "  --speed X              1 = real time (default), 0 = as fast as possible\n"
         "  --max-seconds S        stop after S seconds of emulated time\n"
@@ -504,7 +506,7 @@ int main(int argc, char **argv)
 {
     uint32_t forced_size = 0, forced_id = 0;
     const char *network_profile = NULL, *network_capture = NULL;
-    unsigned forwards[16][2], forward_count = 0;
+    unsigned forwards[16][2], forward_count = 0, dns_count = 0;
     signal(SIGPIPE, SIG_IGN);
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i];
@@ -529,6 +531,18 @@ int main(int argc, char **argv)
         }
         else if (!strcmp(a, "--net-profile") && v) { network_profile = v; i++; }
         else if (!strcmp(a, "--net-capture") && v) { network_capture = v; i++; }
+        else if (!strcmp(a, "--net-host") && v) {
+            const char *separator = strchr(v, '=');
+            char name[254], error[128];
+            if (!separator || separator == v || (size_t)(separator - v) >= sizeof name) {
+                fprintf(stderr, "network host requires NAME=IP\n"); return 2;
+            }
+            memcpy(name, v, (size_t)(separator - v)); name[separator - v] = 0;
+            if (!host_dns_add(name, separator + 1, error, sizeof error)) {
+                fprintf(stderr, "network: %s\n", error); return 2;
+            }
+            dns_count++; i++;
+        }
         else if (!strcmp(a, "--net-forward") && v) {
             char extra;
             if (forward_count == 16 || sscanf(v, "%u:%u%c", &forwards[forward_count][0],
@@ -558,7 +572,7 @@ int main(int argc, char **argv)
     }
     if (!flash_path) usage();
     load_flash(forced_size, forced_id);
-    if (!network_profile && (network_capture || forward_count)) {
+    if (!network_profile && (network_capture || forward_count || dns_count)) {
         fprintf(stderr, "network options require --net-profile\n"); return 2;
     }
     if (network_profile) {

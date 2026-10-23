@@ -1,5 +1,6 @@
 // Ethernet transport only. Firmware protocols still execute in the guest.
 #include "host_net.h"
+#include "host_dns.h"
 #include "emu.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -151,6 +152,12 @@ static bool send_packet(void *opaque, const uint8_t *frame, size_t size)
     (void)opaque;
     if (!host.slirp || size < 14 || size > NET_FRAME_MAX) return false;
     capture(frame, size);
+    uint8_t answer[NET_FRAME_MAX];
+    size_t answer_size = host_dns_reply(frame, size, answer, sizeof answer);
+    if (answer_size) {
+        receive_packet(answer, answer_size, NULL);
+        return true;
+    }
     slirp_input(host.slirp, frame, (int)size);
     return true;
 }
@@ -213,6 +220,7 @@ void host_net_close(void)
     while (host.timers) free_timer(host.timers, NULL);
     if (host.capture) fclose(host.capture);
     memset(&host, 0, sizeof host);
+    host_dns_clear();
 }
 #else
 bool host_net_open(const char *path, char *error, size_t size)

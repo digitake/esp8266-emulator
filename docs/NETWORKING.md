@@ -36,6 +36,11 @@ web server, add `--net-forward 8080:80` and open `http://127.0.0.1:8080/`.
 Forwarded ports bind to loopback. `--net-capture /tmp/network.pcap` records raw
 Ethernet packets for inspection; captures may contain application credentials.
 
+Use `--net-host broker.example.test=10.0.2.2` to map a test hostname to a local
+service. The guest still sends a real DNS request to `10.0.2.3`; the backend
+answers matching IPv4 A queries. Other names use the normal DNS backend.
+Repeat the option for up to 16 names. Overrides remain in place across resets.
+
 The adapter currently models one station interface. SoftAP recovery, RF/WPA
 behavior, sleep transitions and arbitrary SDK versions are not established.
 Blocking network operations inside injected Wi-Fi event callbacks are not
