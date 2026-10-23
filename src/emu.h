@@ -112,6 +112,8 @@ typedef struct {
     uint64_t setup_total, loop_total;   // all boots
     bool trace;
     bool strict;            // stop on unimplemented ROM entry instead of returning 0
+    bool (*entry_hook)(uint32_t pc); // optional, checked before each guest instruction
+    void (*guest_service)(void);    // deferred work at the normal SDK scheduler boundary
 } emu_t;
 
 extern emu_t E;
@@ -170,6 +172,7 @@ int watch_test(uint32_t pc);
 void watch_add(uint32_t pc, const char *name);
 void rom_hle(uint32_t pc);     // PC is inside the ROM region
 uint32_t guest_call(uint32_t fn, int nargs, const uint32_t *args);
+void rom_wake_scheduler(void);
 const char *rom_name(uint32_t pc);
 
 // host.c (main)

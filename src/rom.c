@@ -368,6 +368,11 @@ FN(r_ets_run) {
 }
 static void ets_run_loop(void)
 {
+    if (E.guest_service && !E.call_depth) {
+        C.a[1] = run_sp;
+        C.ps = (C.ps & ~(PS_INTLEVEL | PS_EXCM)) | PS_UM;
+        E.guest_service();
+    }
     for (int p = 32; p >= 0; p--) {
         if (!task[p].count) continue;
         uint32_t ev = task[p].queue + task[p].head * 8;
@@ -395,6 +400,13 @@ static void ets_run_loop(void)
     C.ps = (C.ps & ~(PS_INTLEVEL | PS_EXCM)) | PS_UM;
     C.waiting = 1;           // WAITI 0: sleep until an interrupt, then come back here
     C.pc = ETS_RUN_LOOP;
+}
+
+void rom_wake_scheduler(void)
+{
+    // Host packets may wake this dispatcher, but must not complete arbitrary
+    // firmware WAITI instructions or interrupt handlers.
+    if (C.waiting && C.pc == ETS_RUN_LOOP) C.waiting = 0;
 }
 
 // interrupts and exceptions

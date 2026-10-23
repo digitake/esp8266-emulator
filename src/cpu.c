@@ -738,6 +738,7 @@ static __attribute__((optimize("no-crossjumping,no-gcse"))) void cpu_block(unsig
     };
 #define FETCH() do { \
     pc=C.pc; \
+    if(observe && E.entry_hook && E.entry_hook(pc)) { E.cycles+=16; E.tick+=16*E.tpc; return; } \
     if(observe && (pc==E.sym_setup || pc==E.sym_loop || (E.watch_any && watch_test(pc)))) watch_hit(pc); \
     const uint8_t *p=fetch(pc); \
     if(!p) { cpu_exception(EXC_IFETCH_PROHIB,pc,pc); E.cycles++; E.tick+=E.tpc; return; } \
@@ -866,7 +867,7 @@ int cpu_run(uint32_t stop_pc)
         uint64_t remaining = E.next_event > E.tick ? E.next_event - E.tick : 0;
         unsigned budget = !remaining ? 1 : remaining >= 64 ? 32 : (unsigned)((remaining + E.tpc - 1) / E.tpc);
         if (budget > 32) budget=32;
-        int observe = E.sym_setup || E.sym_loop || E.watch_any;
+        int observe = E.sym_setup || E.sym_loop || E.watch_any || E.entry_hook;
         cpu_block(budget, observe);
     }
 }
