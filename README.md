@@ -74,6 +74,9 @@ Drag `firmware.bin` and `firmware.elf` onto the page; PlatformIO writes both to
 `.pio/build/<env>/`. The chip boots at once. The `.elf` lets the GUI show when
 `setup()` and `loop()` start, and for an Arduino 3.1.2 image it switches on the
 network. Every host name the firmware looks up then leads to your own computer.
+Firmware that keeps its Wi-Fi or broker settings in flash boots already set up
+when you drop a saved `.flash` file with the other two
+([boot with saved settings](docs/USER-MANUAL.md#boot-with-saved-settings)).
 
 No firmware yet? Build the example with
 [PlatformIO Core](https://docs.platformio.org/en/latest/core/installation/index.html)
@@ -105,7 +108,8 @@ example's button, relay and LED on a faceplate.
 | Serial console | UART output with credentials masked; send text to the firmware |
 
 The **Reset**, **Power cycle** and **Erase flash** buttons act like the real
-thing. Flash contents the firmware saves, such as settings, survive restarts.
+thing. Flash contents the firmware saves, such as settings, survive restarts;
+**Download flash** keeps them in a `.flash` file to drop again later.
 See [Use the GUI](docs/USER-MANUAL.md#6-use-the-gui) for every control.
 
 ## Beyond the GUI

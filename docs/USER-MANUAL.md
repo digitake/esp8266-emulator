@@ -208,6 +208,9 @@ address **0x0**. Its first byte must be `0xE9`, the ESP8266 image header.
   tested.
 - A full flash read-back from a board is also a valid image. It brings that
   board's saved configuration, possibly including Wi-Fi credentials, with it.
+  To load it in the GUI as the image, name it `.bin`; named `.flash` and dropped
+  with the application's `.bin`, it is a [saved flash](#boot-with-saved-settings)
+  instead, which keeps the virtual network.
 - The flash size comes from the image header. A file larger than that size is
   refused. The headless runner can set another size with `--chip` or
   `--flash-size` (see [chip and flash options](#chip-and-flash-options)).
@@ -325,7 +328,9 @@ With the runner, every image you load **with its ELF** is checked. If it is an
 Arduino core 3.1.2/lwIP2 image, it runs on the virtual network; otherwise it runs
 offline and the Network card says why. A `.bin` without its `.elf` always runs
 offline, because the network adapter finds its hooks through the ELF's symbols.
-The GUI writes the network profile for you, to `network-profile.txt` in the work
+A [saved flash](#boot-with-saved-settings) dropped with them keeps the network:
+the check and the profile use the plain `.bin`, and the runner finds that build at
+the start of the flash. The GUI writes the network profile for you, to `network-profile.txt` in the work
 directory. It covers the image and up to seven other uploaded images that pass,
 so an OTA update from one to another keeps its network.
 
@@ -378,6 +383,36 @@ dropped on its own runs without an ELF and without the network. The chip boots i
 limited to 16 MiB. Loading the exact same image again resumes its saved flash; a
 rebuilt image starts with fresh flash (see [section 7](#7-resets-flash-and-saved-state)).
 
+#### Boot with saved settings
+
+Firmware that keeps its Wi-Fi, broker or token settings in flash (EEPROM
+emulation, a file system) boots into its own setup mode when the flash is empty.
+To boot it already set up, drop a **saved flash** as a third file, together with
+the `.bin` and `.elf`:
+
+- **Name rule:** a file whose name ends in `.flash`, `.img` or `.dump` is a saved
+  flash, never the image. It needs the `.bin` it belongs to in the same drop.
+  **Download flash** saves files as `<image name>.flash`, so they can be dropped
+  again as they are.
+- It must be a **whole flash**, as the emulator keeps it: first byte `0xE9`, and
+  exactly the flash size in the `.bin` header, for example 2 MB (2,097,152 bytes)
+  for a 2 MB build. Anything else is refused, with the reason in the message.
+- It replaces the image's saved flash, and the image chip shows `saved flash`.
+  **Erase flash** still starts over from the plain `.bin`.
+
+A saved flash comes from **Download flash** in an earlier session, or from a
+board: `esptool.py read_flash 0 0x200000 board.flash` for a 2 MB board. A board
+dump holds that board's real credentials (see
+[privacy](#13-privacy-and-local-files)). You can also make one: pad the `.bin`
+with `0xFF` bytes to the flash size and write your settings at their offset.
+
+The flash should start with the same `.bin`. If it holds another build (after an
+OTA update, say) or a header that esptool rewrote when it flashed the board, a
+toast says so. The chip boots what the flash holds, and on the
+[virtual network](#the-network-in-the-gui) the runner halts with
+`network profile has no matching application` unless that exact build was loaded
+before with its `.elf`.
+
 ### Page layout
 
 The header carries the image chip, the profile menu and the live readouts. Below
@@ -387,7 +422,7 @@ stack: Board first, then the console, then the rest.
 
 | Header item | Meaning |
 | --- | --- |
-| Image chip | File name, size, first 8 hex digits of the SHA-256, flash size, `+elf` when an ELF is loaded, and `saved flash` when flash was resumed from an earlier session. Click it to load another image. |
+| Image chip | File name, size, first 8 hex digits of the SHA-256, flash size, `+elf` when an ELF is loaded, and `saved flash` when flash was resumed from an earlier session or loaded from a dropped `.flash` file. Click it to load another image. |
 | Profile menu | Choose the GPIO display profile |
 | `emulated` | Emulated time since the last reset |
 | `speed` | Measured ratio of emulated time to real time, with a sparkline of the last 20 seconds; `max · N×` in maximum-speed mode. The `1×`, `¼×` and `max` buttons beside it set the speed; `max` is dimmed while the image runs on the virtual network. |
@@ -403,7 +438,8 @@ flash bus (GPIO11 CS0, GPIO7 MISO, GPIO9, GPIO10, GPIO8 MOSI, GPIO6 SCLK) along
 the bottom; TXD0 (GPIO1), RXD0 (GPIO3), GPIO5, GPIO4, GPIO0, GPIO2, GPIO15 and
 GND up the right edge. The **Reset**, **Power cycle** and **Erase flash** buttons
 in the card title act on the chip (see [section 7](#7-resets-flash-and-saved-state));
-Erase flash asks for confirmation first.
+Erase flash asks for confirmation first. **Download flash** saves the emulated
+flash as a `.flash` file, to [drop again later](#boot-with-saved-settings).
 
 Each GPIO pad shows its level by its fill and its mode by the tag under its name:
 
@@ -524,8 +560,8 @@ network, the GUI switches to `1×` and says so in the emulator log.
 On the local-only network, the firmware's broker, update server and API host all
 resolve to your computer. To test MQTT or an OTA update, run that service on your
 computer, for example a broker on port 1883 or 8883 and a web server holding the
-update image. For firmware that needs settings stored in flash before it joins
-Wi-Fi, see [troubleshooting](#14-troubleshooting).
+update image. Firmware that needs settings stored in flash before it joins Wi-Fi
+boots with them from a [saved flash](#boot-with-saved-settings).
 
 ### Serial console
 
@@ -568,12 +604,21 @@ Images are identified by their SHA-256. A rebuilt firmware, even one differing b
 single byte, gets a new identity and starts with fresh flash. The old saved flash
 stays in the work directory until you delete it.
 
+To keep a state, or move it to another computer or work directory, click
+**Download flash** in the Board card. It saves the whole emulated flash as
+`<image name>.flash`, as last saved, so at most half a second old; before the
+firmware has written anything, that is the image padded with `0xFF`. Drop the file
+later with the same `.bin` (and `.elf`) to boot from it: it replaces the saved
+flash for that image ([boot with saved settings](#boot-with-saved-settings)).
+**Erase flash** still rewrites the flash from the plain `.bin`.
+
 | File in `<workdir>/images/` | Contents |
 | --- | --- |
 | `<sha256>.bin` | The uploaded image |
 | `<sha256>.flash` | Saved flash state for that image |
 | `<sha256>.json` | Image name, size, profile and ELF location |
 | `<sha256>.elf` | An uploaded ELF, named by its own hash |
+| `<sha256>.flash-upload` | A dropped saved flash, named by its own hash, until its `.bin` arrives; at most one |
 
 To forget everything, stop the server and delete the work directory.
 
@@ -1114,7 +1159,8 @@ criteria.
   heuristic, so review output before you share it.
 - These are **not** masked: the headless event stream, `--uart-log`,
   `--calltrace` and `--mmiotrace` output, and the saved `.flash` files in the work
-  directory, which hold whatever the firmware stored, including Wi-Fi credentials.
+  directory and from **Download flash**, which hold whatever the firmware stored,
+  including Wi-Fi credentials.
 - In a bug report, share masked reports and image hashes rather than firmware
   binaries or flash files.
 
@@ -1141,7 +1187,12 @@ criteria.
 | Network card: `offline: drop the .elf together with the .bin…` | The network needs the ELF from the same build. Drop both files in one go. |
 | Network card: `offline: not an Arduino core 3.1.2/lwIP2 network image (…)` | The image was not built with Arduino core 3.1.2 and lwIP2, or the ELF is from another build. The text in brackets names the check that failed. The image still runs, without a network. |
 | Network card: `offline: the network runner is not built…`; the launcher prints `virtual network: off, libslirp is missing` | Install libslirp in WSL: `sudo apt install -y libslirp-dev libglib2.0-dev pkg-config`, then start the GUI again. |
-| Virtual station stays `not connected` | The firmware has not joined Wi-Fi. Firmware that keeps its Wi-Fi settings in flash and waits in its own setup mode for them stays there: the virtual network cannot reach a soft AP. Run it headless from a full flash image that already holds the settings, with a network profile made from the plain `.bin` ([virtual network](#virtual-network-experimental)). |
+| Virtual station stays `not connected` | The firmware has not joined Wi-Fi. Firmware that keeps its Wi-Fi settings in flash and waits in its own setup mode for them stays there: the virtual network cannot reach a soft AP. Drop a saved flash that already holds the settings together with the `.bin` and `.elf` ([boot with saved settings](#boot-with-saved-settings)). The SSID and password in it can be anything: the virtual station joins whichever network the firmware asks for. |
+| `Upload refused: not a saved flash (first byte must be 0xE9)…` | The `.flash`, `.img` or `.dump` file is not a whole flash starting at address 0x0. Save it again with **Download flash**, or read the board from address 0. |
+| `Upload refused: a saved flash is the whole flash: this file is N bytes, its header says …` | The file is only part of the flash. Read the whole chip, for example `esptool.py read_flash 0 0x200000 board.flash` for 2 MB. |
+| `Upload refused: the saved flash is N, but this image is built for M of flash` | The flash comes from a board or build with another flash size. Drop the flash saved with this firmware, or build for the board's flash size. |
+| Toast: `The saved flash does not start with this .bin…` | The flash holds another build, for example after an OTA update. It boots anyway. For the virtual network, drop it with the `.bin` and `.elf` it holds ([boot with saved settings](#boot-with-saved-settings)). |
+| `HALT: network profile has no matching application…` | The flash holds a build the GUI has no `.elf` for. Load that build's `.bin` and `.elf` once, or drop a flash saved with this `.bin`. |
 | `--net-profile needs the network runner …, and building it needs libslirp` | The GUI was started with `--net-profile`, but libslirp is missing. Install it: `sudo apt install -y libslirp-dev libglib2.0-dev pkg-config`. |
 | Network card: `offline: this image (sha256 …) is not in the network profile` | The profile binds exact builds. Regenerate it with `scripts/network_profile.py` for this BIN and its ELF, then load the image again. |
 | `live networking needs a positive speed: the network runner refuses 0 (max)` | The image runs on the virtual network; choose `1×` or `¼×`. |
