@@ -1,5 +1,8 @@
 #include <ESP8266WiFi.h>
 #include <ESP8266httpUpdate.h>
+#include <ESP8266HTTPUpdateServer.h>
+#include <ESP8266WebServer.h>
+#include <EEPROM.h>
 #include <string.h>
 
 // Small MQTT 3.1.1 QoS 0 client for the emulator's broker and OTA harness.
@@ -14,18 +17,28 @@
 
 static const char *const WIFI_SSID = "emu-test";
 static const char *const WIFI_PASSWORD = "emu-pass";
-static const IPAddress BROKER_IP(10, 0, 2, 2);
+static const char *const BROKER_HOST = "broker.example.test";
 static const uint16_t BROKER_PORT = 1883;
 static const char *const VERSION_TOPIC = "emulator/version";
 static const char *const OTA_TOPIC = "emulator/ota";
+static const char *const CONFIG_TOPIC = "emulator/config";
 static const char *const CLIENT_ID = "esp8266-reference";
 static const char *const VERSION = REFERENCE_VERSION;
+static const uint8_t CONFIG_MARKER[] = {'n', 'e', 't', '-', 'v', '1'};
+static const size_t CONFIG_MARKER_SIZE = sizeof(CONFIG_MARKER);
 
 static WiFiClient mqtt;
 static WiFiClient updateClient;
 static ESP8266HTTPUpdate updater(12000);
+static ESP8266WebServer webServer(80);
+static ESP8266HTTPUpdateServer httpUpdater;
 static uint16_t mqttPacketId = 1;
 static uint32_t lastPingMs = 0;
+static bool webServerStarted = false;
+static bool configMarkerPresent = false;
+static uint8_t networkLifecycle = 0;
+static bool lifecycleModeOffOk = false;
+static bool lifecycleStationOnOk = false;
 
 static bool writeAll(const uint8_t *data, size_t size)
 {
@@ -143,7 +156,7 @@ static bool readPacket(uint8_t &header, uint8_t *payload, size_t capacity,
 
 static bool connectBroker(void)
 {
-    if (!mqtt.connect(BROKER_IP, BROKER_PORT)) return false;
+    if (!mqtt.connect(BROKER_HOST, BROKER_PORT)) return false;
     if (!sendConnect()) { mqtt.stop(); return false; }
     uint8_t header, payload[128];
     size_t length;
@@ -184,6 +197,9 @@ static void handlePacket(uint8_t header, const uint8_t *payload, size_t length)
     if (type == 9) { // SUBACK
         sendPublish(VERSION_TOPIC, VERSION);
         Serial.printf("firmware version %s\n", VERSION);
+        sendPublish(CONFIG_TOPIC, configMarkerPresent ? "persisted-v1" : "missing");
+        Serial.printf("configuration marker %s\n",
+                      configMarkerPresent ? "persisted-v1" : "missing");
         return;
     }
     if (type == 3 && length >= 2) { // incoming PUBLISH; QoS 0
@@ -231,6 +247,17 @@ void setup()
     WiFi.mode(WIFI_STA);
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
     updater.rebootOnUpdate(true);
+    EEPROM.begin(32);
+    bool matches = true;
+    for (size_t i = 0; i < CONFIG_MARKER_SIZE; i++)
+        if (EEPROM.read(i) != CONFIG_MARKER[i]) matches = false;
+    if (strcmp(VERSION, "A") == 0 && !matches) {
+        for (size_t i = 0; i < CONFIG_MARKER_SIZE; i++) EEPROM.write(i, CONFIG_MARKER[i]);
+        EEPROM.commit();
+        matches = true;
+    }
+    configMarkerPresent = matches;
+    httpUpdater.setup(&webServer);
 }
 
 void loop()
@@ -240,6 +267,37 @@ void loop()
         delay(100);
         return;
     }
+    if (networkLifecycle == 0) {
+        bool initiallyDhcp = WiFi.localIP() == IPAddress(10, 0, 2, 15);
+        lifecycleModeOffOk = WiFi.mode(WIFI_OFF);
+        delay(100);
+        lifecycleModeOffOk = initiallyDhcp && lifecycleModeOffOk &&
+                             WiFi.status() != WL_CONNECTED &&
+                             WiFi.localIP() == IPAddress(0, 0, 0, 0);
+        Serial.printf("network lifecycle mode-off %s\n",
+                      lifecycleModeOffOk ? "disconnected" : "failed");
+        lifecycleStationOnOk = WiFi.mode(WIFI_STA);
+        if (lifecycleStationOnOk) WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+        networkLifecycle = 1;
+        return;
+    }
+    if (networkLifecycle == 1) {
+        if (WiFi.status() != WL_CONNECTED) {
+            delay(100);
+            return;
+        }
+        lifecycleStationOnOk = lifecycleStationOnOk &&
+                               WiFi.localIP() == IPAddress(10, 0, 2, 15);
+        networkLifecycle = 2;
+        Serial.printf("network lifecycle station %s\n",
+                      lifecycleModeOffOk && lifecycleStationOnOk ? "dhcp restored" : "failed");
+    }
+    if (!webServerStarted) {
+        webServer.begin();
+        webServerStarted = true;
+        Serial.println("web updater listening on port 80");
+    }
+    webServer.handleClient();
     if (!mqtt.connected()) {
         if (!connectBroker()) delay(500);
         return;
