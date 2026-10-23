@@ -18,7 +18,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 from mask import mask_text            # noqa: E402
-from elfsyms import read_symbols      # noqa: E402
+from elfsyms import arduino_hooks, read_symbols  # noqa: E402
 from support import cli, source_commit  # noqa: E402
 
 
@@ -55,6 +55,7 @@ def main():
     ap.add_argument('--new', required=True)
     ap.add_argument('--gzip', action='store_true', help='upload the new image gzip-compressed (eboot gunzips it)')
     ap.add_argument('--expect', help='text the new image prints on UART when it runs (proves which image booted)')
+    ap.add_argument('--new-elf', help='replacement ELF; observes its setup()/loop() entries')
     ap.add_argument('--seconds', type=float, default=6)
     ap.add_argument('--stage-at-ms', type=float, default=1500)
     ap.add_argument('--source', default='')
@@ -99,6 +100,9 @@ def write_result(path, result):
 
 def rehearse(a, B, payload, slot, result, tmp):
     up, flash_out = os.path.join(tmp, 'upload.bin'), os.path.join(tmp, 'flash.bin')
+    setup_addr = loop_addr = None
+    if getattr(a, 'new_elf', None):
+        setup_addr, loop_addr = arduino_hooks(a.new_elf)
     Path(up).write_bytes(payload)
     script = os.path.join(tmp, 'script.txt')
     t = a.stage_at_ms
@@ -111,6 +115,11 @@ def rehearse(a, B, payload, slot, result, tmp):
     uart_log = os.path.join(tmp, 'uart.log')
     cmd = [exe, '--flash', a.running, '--flash-out', flash_out, '--speed', '0', '--max-seconds', str(a.seconds),
            '--no-stdin', '--script', script, '--uart-log', uart_log]
+    if getattr(a, 'new_elf', None):
+        if setup_addr:
+            cmd += ['--sym-setup', hex(setup_addr)]
+        if loop_addr:
+            cmd += ['--sym-loop', hex(loop_addr)]
     t0 = time.monotonic()
     out = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True, timeout=600)
     wall = time.monotonic() - t0
@@ -120,17 +129,29 @@ def rehearse(a, B, payload, slot, result, tmp):
 
     stages = [(e['s'], e['boot'], round(e['t_us'] / 1000, 3)) for e in events if e['t'] == 'stage']
     halts = [e['m'] for e in events if e['t'] == 'halt']
-    second = uart.split(' ets Jan  8 2013', 2)
+    boot_uart = uart.split(' ets Jan  8 2013')
+    # Boot 1 is the original image; boot 2 runs eboot and then the replacement image.
+    # Keep all identity and eboot evidence within that one boot. Later boots indicate
+    # an unexpected reset and must not make an earlier marker look like stable success.
+    update_uart = boot_uart[2] if len(boot_uart) > 2 else ''
     eboot_line = ''
-    if len(second) > 2:
-        for line in second[2].splitlines():
+    if update_uart:
+        for line in update_uart.splitlines():
             if line.startswith('@') or line.startswith('~') or 'cp:' in line or line.startswith('ld') or line.startswith('e:'):
                 eboot_line += line + ' | '
     copied = flash[:len(B)] == B
     erased_tail = flash[len(B):round4k(len(B))] == b'\xff' * (round4k(len(B)) - len(B))
-    # The target ELF is optional: SDK entry is observable without Arduino hooks.
-    booted = [s for s in stages if s[1] == 2 and s[0] in ('sdk', 'setup', 'loop')]
-    expect_ok = bool(len(second) > 2 and a.expect in second[2]) if a.expect else None
+    boot2_sdk = any(s[1] == 2 and s[0] in ('sdk', 'setup', 'loop') for s in stages)
+    boot_numbers = [s[1] for s in stages if isinstance(s[1], int)]
+    unexpected_reset = len(boot_uart) > 3 or any(boot > 2 for boot in boot_numbers)
+    expect_ok = (a.expect in update_uart) if a.expect else None
+    setup_proof = (any(s[1] == 2 and s[0] in ('setup', 'loop') for s in stages)
+                   if setup_addr else None)
+    loop_proof = (any(s[1] == 2 and s[0] == 'loop' for s in stages)
+                  if loop_addr else None)
+    readiness = ('not_stable' if unexpected_reset else
+                 'not_reached' if expect_ok is False or loop_proof is False else
+                 'confirmed' if expect_ok is True and loop_proof is True else 'unknown')
     result.update({
         'emulator': {'git_parent': source_commit(a.emu_commit),
                      'host_wall_seconds': round(wall, 2), 'script': Path(script).read_text().replace(tmp, '<tmp>').splitlines()},
@@ -138,18 +159,29 @@ def rehearse(a, B, payload, slot, result, tmp):
         'eboot_output_after_restart': eboot_line.strip(' |'),
         'flash_0x0_equals_new_image': copied,
         'flash_after_image_in_last_sector_is_ff': erased_tail,
-        'new_image_reached_sdk_main_loop': bool(booted),
+        'new_image_reached_sdk_main_loop': boot2_sdk,
+        'sdk_main_reached': boot2_sdk,
+        'application_setup_observed': setup_proof,
+        'application_loop_observed': loop_proof,
+        'application_readiness': readiness,
+        'new_elf': ({'bin': os.path.basename(a.new_elf),
+                     'sha256': sha(Path(a.new_elf).read_bytes())} if getattr(a, 'new_elf', None) else None),
         'expected_text_seen': expect_ok,
-        'uart0_masked_after_restart': mask_text(second[2]).splitlines()[:80] if len(second) > 2 else [],
+        'target_boot_marker_seen': expect_ok,
+        'boot2_uart_present': bool(update_uart),
+        'unexpected_later_reset': unexpected_reset,
+        'uart_boot_banners': len(boot_uart) - 1,
+        'uart0_masked_after_restart': mask_text(update_uart).splitlines()[:80],
     })
     # '@' = valid command, 'cp:' copy, optional 'B' = bootloader sector identical so eboot skipped it, then the result
     copy_ok = bool(re.match(r'@cp:B?0( |$)', eboot_line))
     result['eboot_copy_result_ok'] = copy_ok
-    ok = copied and erased_tail and bool(booted) and copy_ok and not halts and expect_ok is not False
+    ok = (copied and erased_tail and boot2_sdk and bool(update_uart) and copy_ok and not halts and
+          expect_ok is not False and loop_proof is not False and not unexpected_reset)
     result['verdict'] = 'PASS' if ok else 'FAIL'
     write_result(a.out, result)
     print('%s: %s; slot %s, eboot "%s", flash==new %s, booted %s, expect %s' % (
-        a.out, result['verdict'], hex(slot), result['eboot_output_after_restart'], copied, booted[:1], expect_ok))
+        a.out, result['verdict'], hex(slot), result['eboot_output_after_restart'], copied, boot2_sdk, expect_ok))
     return 0 if ok else 1
 
 

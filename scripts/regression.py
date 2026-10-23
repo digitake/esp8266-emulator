@@ -24,14 +24,14 @@ from support import cli
 COMMON_FIELDS = {'name', 'kind', 'reference', 'seconds'}
 CASE_FIELDS = {
     'evidence': COMMON_FIELDS | {'bin', 'elf', 'profile', 'profile_file', 'script', 'milestone'},
-    'ota': COMMON_FIELDS | {'running', 'running_elf', 'new', 'gzip', 'stage_at_ms', 'expect'},
+    'ota': COMMON_FIELDS | {'running', 'running_elf', 'new', 'new_elf', 'gzip', 'stage_at_ms', 'expect'},
 }
 REQUIRED_FIELDS = {
     'evidence': {'name', 'kind', 'reference', 'bin'},
     'ota': {'name', 'kind', 'reference', 'running', 'running_elf', 'new'},
 }
 STRING_FIELDS = {'name', 'kind', 'reference', 'bin', 'elf', 'profile', 'profile_file',
-                 'script', 'milestone', 'running', 'running_elf', 'new', 'expect'}
+                 'script', 'milestone', 'running', 'running_elf', 'new', 'new_elf', 'expect'}
 
 
 def load_manifest(path):
@@ -132,6 +132,10 @@ def run_case(case, reference, base, output):
             cmd += ['--gzip']
         if 'expect' in case:
             cmd += ['--expect', case['expect']]
+        if 'new_elf' in case:
+            new_elf = resolve_path(base, case['new_elf'])
+            check_hash(new_elf, reference['new_elf']['sha256'])
+            cmd += ['--new-elf', str(new_elf)]
     else:
         image = resolve_path(base, case['bin'])
         check_hash(image, reference['firmware']['bin_sha256'])
@@ -166,7 +170,7 @@ def main():
     base = args.manifest.parent
     protected = {args.manifest}
     for case in cases:
-        for key in ('reference', 'bin', 'elf', 'profile_file', 'script', 'running', 'running_elf', 'new'):
+        for key in ('reference', 'bin', 'elf', 'profile_file', 'script', 'running', 'running_elf', 'new', 'new_elf'):
             if key in case:
                 protected.add(resolve_path(base, case[key]))
     if args.cases:

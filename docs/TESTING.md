@@ -84,7 +84,7 @@ python3 -I scripts/regression.py \
 | Case kind | Required fields beyond `name` and `kind` | Optional fields |
 | --- | --- | --- |
 | `evidence` | `bin`, `reference` | `elf`, `profile`, `profile_file`, `seconds`, `script`, `milestone` |
-| `ota` | `running`, `running_elf`, `new`, `reference` | `gzip`, `seconds`, `stage_at_ms`, `expect` |
+| `ota` | `running`, `running_elf`, `new`, `reference` | `new_elf`, `gzip`, `seconds`, `stage_at_ms`, `expect` |
 
 Case names must be safe filename identifiers and unique within the manifest.
 The parser rejects unknown keys; manifests select supported operations rather
@@ -113,15 +113,25 @@ running image, its matching ELF for the flash layout, and a replacement image:
 ```sh
 python3 -I scripts/ota_rehearsal.py \
   --running /path/to/running.bin --running-elf /path/to/running.elf \
-  --new /path/to/update.bin --expect 'new version marker' \
+  --new /path/to/update.bin --new-elf /path/to/update.elf \
+  --expect 'new version marker' \
   --out /tmp/ota-raw.json
 ```
 
 Add `--gzip` to stage a compressed update. The tool injects staged bytes and a
 CRC-protected RTC command, resets the guest, and checks the image's own eboot
-copy, erased tail and resulting boot. It does **not** exercise HTTP download,
-live Updater writes or application-specific OTA triggering. Firmware using a
-different bootloader or update protocol needs a different rehearsal.
+copy, erased tail and replacement image's second boot. `--expect` checks for a
+target-specific UART marker in that boot; if omitted, target identity is unknown.
+An optional `--new-elf` observes `setup()` and `loop()` entry hooks. Without it,
+the report marks application-loop readiness unknown: SDK scheduler entry alone
+does not prove that Arduino `loop()` ran. The legacy
+`new_image_reached_sdk_main_loop` report field records SDK scheduler entry;
+`application_loop_observed` records the actual loop hook (`null` when not
+instrumented). Any reset after the replacement boot makes the rehearsal fail.
+
+The rehearsal does **not** exercise HTTP download, live Updater writes or
+application-specific OTA triggering. Firmware using a different bootloader or
+update protocol needs a different rehearsal.
 
 ## Performance and bug reports
 

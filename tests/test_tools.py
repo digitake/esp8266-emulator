@@ -82,6 +82,33 @@ class ToolTests(unittest.TestCase):
                     regression.run_case(case, reference, base, base / 'out.json')
                 run.assert_not_called()
 
+    def test_ota_manifest_passes_new_elf_and_checks_its_reference_hash(self):
+        with tempfile.TemporaryDirectory() as work:
+            base = Path(work)
+            paths = {name: base / name for name in ('running.bin', 'running.elf', 'new.bin', 'new.elf')}
+            for name, path in paths.items():
+                path.write_bytes(name.encode())
+            reference = {
+                'running': {'sha256': hashlib.sha256(paths['running.bin'].read_bytes()).hexdigest()},
+                'new': {'sha256': hashlib.sha256(paths['new.bin'].read_bytes()).hexdigest()},
+                'new_elf': {'sha256': hashlib.sha256(paths['new.elf'].read_bytes()).hexdigest()},
+            }
+            case = {'kind': 'ota', 'name': 'update', 'reference': 'ref.json',
+                    'running': 'running.bin', 'running_elf': 'running.elf',
+                    'new': 'new.bin', 'new_elf': 'new.elf'}
+            manifest = base / 'manifest.json'
+            manifest.write_text(json.dumps({'schema': 1, 'cases': [case]}))
+            self.assertEqual(regression.load_manifest(manifest), [case])
+            with patch.object(regression.subprocess, 'run') as run:
+                regression.run_case(case, reference, base, base / 'out.json')
+            command = run.call_args.args[0]
+            self.assertEqual(command[command.index('--new-elf') + 1], str(paths['new.elf']))
+            paths['new.elf'].write_bytes(b'changed ELF')
+            with patch.object(regression.subprocess, 'run') as run:
+                with self.assertRaisesRegex(ValueError, 'hash mismatch'):
+                    regression.run_case(case, reference, base, base / 'out.json')
+                run.assert_not_called()
+
     def test_comparison_excludes_only_provenance_and_preserves_exact_behavior(self):
         reference = {'date_utc': 'old', 'note': '', 'source': '',
                      'firmware': {'source': 'old', 'bin_sha256': 'same'},
@@ -210,7 +237,7 @@ class ToolTests(unittest.TestCase):
                 self.assertEqual(ota_rehearsal.main(), 1)
             self.assertFalse(json.loads(output.read_text())['layout']['fits'])
 
-    def test_ota_failed_copy_or_missing_expected_text_is_nonzero(self):
+    def test_ota_failed_copy_or_missing_boot2_expected_text_is_nonzero(self):
         for copy_ok in (False, True):
             with self.subTest(copy_ok=copy_ok), tempfile.TemporaryDirectory() as work:
                 directory = Path(work)
@@ -231,6 +258,123 @@ class ToolTests(unittest.TestCase):
                 record = json.loads(Path(args.out).read_text())
                 self.assertEqual(record['verdict'], 'FAIL')
                 self.assertFalse(record['expected_text_seen'])
+
+    def test_ota_rejects_marker_from_later_boot_and_any_unexpected_reset(self):
+        for later_reset in (False, True):
+            with self.subTest(later_reset=later_reset), tempfile.TemporaryDirectory() as work:
+                directory = Path(work)
+                target = b'new firmware'
+                (directory / 'flash.bin').write_bytes(target + b'\xff' * (4096 - len(target)))
+                uart = ' ets Jan  8 2013\nold app\n ets Jan  8 2013\n@cp:0\n'
+                if later_reset:
+                    uart += 'new image marker\n ets Jan  8 2013\nreset\n'
+                else:
+                    uart += ' ets Jan  8 2013\nnew image marker\n'
+                (directory / 'uart.log').write_text(uart)
+                args = SimpleNamespace(stage_at_ms=1500, running='test.bin', seconds=6,
+                                       expect='new image marker', emu_commit='test',
+                                       out=str(directory / 'result.json'))
+                events = [{'t': 'stage', 's': 'sdk', 'boot': 2, 't_us': 1500000}]
+                if later_reset:
+                    events.append({'t': 'stage', 's': 'rom', 'boot': 3, 't_us': 2500000})
+                result = subprocess.CompletedProcess(
+                    ['emulator'], 0,
+                    stdout='\n'.join(json.dumps(event) for event in events).encode())
+                with patch.object(ota_rehearsal.subprocess, 'run', side_effect=[None, result]), \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    status = ota_rehearsal.rehearse(args, target, target, 4096, {}, work)
+                self.assertEqual(status, 1)
+                record = json.loads(Path(args.out).read_text())
+                self.assertEqual(record['expected_text_seen'], later_reset)
+                self.assertTrue(record['unexpected_later_reset'])
+
+    def test_ota_passes_with_boot2_marker_and_optional_new_elf_loop_hook(self):
+        with tempfile.TemporaryDirectory() as work:
+            directory = Path(work)
+            target = b'new firmware'
+            (directory / 'flash.bin').write_bytes(target + b'\xff' * (4096 - len(target)))
+            (directory / 'uart.log').write_text(
+                ' ets Jan  8 2013\nold app\n ets Jan  8 2013\n'
+                '@cp:0\nnew image marker\n')
+            new_elf = directory / 'new.elf'
+            new_elf.write_bytes(b'fixture ELF')
+            args = SimpleNamespace(stage_at_ms=1500, running='test.bin', seconds=6,
+                                   expect='new image marker', emu_commit='test',
+                                   new_elf=str(new_elf), out=str(directory / 'result.json'))
+            events = [{'t': 'stage', 's': 'sdk', 'boot': 2, 't_us': 1500000},
+                      {'t': 'stage', 's': 'setup', 'boot': 2, 't_us': 1600000},
+                      {'t': 'stage', 's': 'loop', 'boot': 2, 't_us': 1700000}]
+            result = subprocess.CompletedProcess(
+                ['emulator'], 0,
+                stdout='\n'.join(json.dumps(event) for event in events).encode())
+            with patch.object(ota_rehearsal, 'arduino_hooks', return_value=(0x40100000, 0x40100010)), \
+                    patch.object(ota_rehearsal.subprocess, 'run', side_effect=[None, result]), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                status = ota_rehearsal.rehearse(args, target, target, 4096, {}, work)
+            self.assertEqual(status, 0)
+            record = json.loads(Path(args.out).read_text())
+            self.assertEqual(record['verdict'], 'PASS')
+            self.assertTrue(record['expected_text_seen'])
+            self.assertTrue(record['new_image_reached_sdk_main_loop'])
+            self.assertTrue(record['application_loop_observed'])
+            self.assertEqual(record['application_readiness'], 'confirmed')
+
+    def test_ota_fails_when_new_elf_loop_hook_is_missing(self):
+        with tempfile.TemporaryDirectory() as work:
+            directory = Path(work)
+            target = b'new firmware'
+            (directory / 'flash.bin').write_bytes(target + b'\xff' * (4096 - len(target)))
+            (directory / 'uart.log').write_text(
+                ' ets Jan  8 2013\nold app\n ets Jan  8 2013\n'
+                '@cp:0\nnew image marker\n')
+            new_elf = directory / 'new.elf'
+            new_elf.write_bytes(b'fixture ELF')
+            args = SimpleNamespace(stage_at_ms=1500, running='test.bin', seconds=6,
+                                   expect='new image marker', emu_commit='test',
+                                   new_elf=str(new_elf), out=str(directory / 'result.json'))
+            events = [{'t': 'stage', 's': 'sdk', 'boot': 2, 't_us': 1500000},
+                      {'t': 'stage', 's': 'setup', 'boot': 2, 't_us': 1600000}]
+            result = subprocess.CompletedProcess(
+                ['emulator'], 0,
+                stdout='\n'.join(json.dumps(event) for event in events).encode())
+            with patch.object(ota_rehearsal, 'arduino_hooks', return_value=(0x40100000, 0x40100010)) as hooks, \
+                    patch.object(ota_rehearsal.subprocess, 'run', side_effect=[None, result]), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                status = ota_rehearsal.rehearse(args, target, target, 4096, {}, work)
+            self.assertEqual(status, 1)
+            hooks.assert_called_once_with(str(new_elf))
+            record = json.loads(Path(args.out).read_text())
+            self.assertEqual(record['verdict'], 'FAIL')
+            self.assertTrue(record['expected_text_seen'])
+            self.assertFalse(record['application_loop_observed'])
+            self.assertEqual(record['application_readiness'], 'not_reached')
+
+    def test_ota_stage_only_unexpected_reset_makes_readiness_unstable(self):
+        with tempfile.TemporaryDirectory() as work:
+            directory = Path(work)
+            target = b'new firmware'
+            (directory / 'flash.bin').write_bytes(target + b'\xff' * (4096 - len(target)))
+            (directory / 'uart.log').write_text(
+                ' ets Jan  8 2013\nold app\n ets Jan  8 2013\n'
+                '@cp:0\nnew image marker\n')
+            args = SimpleNamespace(stage_at_ms=1500, running='test.bin', seconds=6,
+                                   expect='new image marker', emu_commit='test',
+                                   out=str(directory / 'result.json'))
+            events = [{'t': 'stage', 's': 'sdk', 'boot': 2, 't_us': 1500000},
+                      {'t': 'stage', 's': 'setup', 'boot': 2, 't_us': 1600000},
+                      {'t': 'stage', 's': 'loop', 'boot': 2, 't_us': 1700000},
+                      {'t': 'stage', 's': 'rom', 'boot': 3, 't_us': 2500000}]
+            result = subprocess.CompletedProcess(
+                ['emulator'], 0,
+                stdout='\n'.join(json.dumps(event) for event in events).encode())
+            with patch.object(ota_rehearsal.subprocess, 'run', side_effect=[None, result]), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                status = ota_rehearsal.rehearse(args, target, target, 4096, {}, work)
+            self.assertEqual(status, 1)
+            record = json.loads(Path(args.out).read_text())
+            self.assertEqual(record['uart_boot_banners'], 2)
+            self.assertTrue(record['unexpected_later_reset'])
+            self.assertEqual(record['application_readiness'], 'not_stable')
 
     def test_ota_requires_erased_sector_tail_and_no_halt(self):
         for dirty_tail, halted in ((False, False), (True, False), (False, True)):
@@ -258,6 +402,8 @@ class ToolTests(unittest.TestCase):
                 self.assertEqual(record['verdict'], 'PASS' if success else 'FAIL')
                 self.assertTrue(record['flash_0x0_equals_new_image'])
                 self.assertTrue(record['new_image_reached_sdk_main_loop'])
+                self.assertIsNone(record['application_loop_observed'])
+                self.assertEqual(record['application_readiness'], 'unknown')
                 self.assertEqual(record['flash_after_image_in_last_sector_is_ff'], not dirty_tail)
                 self.assertEqual(bool(record['halt']), halted)
 
