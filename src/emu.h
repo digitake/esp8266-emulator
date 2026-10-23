@@ -5,6 +5,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <setjmp.h>
+#include "chip_profile.h"
 
 #define DRAM_BASE      0x3FFE8000u
 #define DRAM_SIZE      0x00018000u   // 96 KiB, 0x3FFE8000..0x3FFFFFFF
@@ -90,6 +91,7 @@ typedef struct {
     jmp_buf reset_jmp;      // top level (reset / power cycle unwinds everything)
 
     uint8_t *flash; uint32_t flash_size;
+    const struct chip_profile *chip_profile;
     uint32_t flash_map_off;          // flash offset mapped at 0x40200000
     uint32_t flash_id;
     bool flash_dirty;

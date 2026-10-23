@@ -394,25 +394,47 @@ static int flash_size_from_header(uint8_t b3)
     }
 }
 
-static void load_flash(uint32_t forced_size)
+static const struct chip_profile *selected_chip;
+
+static uint32_t flash_option(const char *text, const char *option)
+{
+    char *end;
+    errno = 0;
+    unsigned long long value = strtoull(text, &end, 0);
+    if (errno || end == text || *end || text[0] == '-' || value > UINT32_MAX) {
+        fprintf(stderr, "%s requires an unsigned 32-bit number\n", option);
+        exit(2);
+    }
+    return (uint32_t)value;
+}
+
+static void load_flash(uint32_t forced_size, uint32_t forced_id)
 {
     FILE *f = fopen(flash_path, "rb");
     if (!f) { fprintf(stderr, "cannot open %s: %s\n", flash_path, strerror(errno)); exit(2); }
-    fseek(f, 0, SEEK_END);
+    if (fseek(f, 0, SEEK_END)) { fprintf(stderr, "cannot seek flash image\n"); exit(2); }
     long n = ftell(f);
+    if (n < 4) { fprintf(stderr, "image too small\n"); exit(2); }
     fseek(f, 0, SEEK_SET);
     uint8_t hdr[4] = { 0 };
     if (fread(hdr, 1, 4, f) != 4) { fprintf(stderr, "image too small\n"); exit(2); }
     fseek(f, 0, SEEK_SET);
-    uint32_t size = forced_size ? forced_size : (uint32_t)flash_size_from_header(hdr[3]);
-    if ((uint32_t)n > size) size = (uint32_t)n;
+    E.chip_profile = selected_chip ? selected_chip : chip_profile_find("esp8266");
+    uint32_t size = forced_size ? forced_size : (selected_chip ? selected_chip->default_flash_size :
+                                               (uint32_t)flash_size_from_header(hdr[3]));
+    char error[180];
+    if (!chip_profile_validate(E.chip_profile, size, (uint64_t)n, error, sizeof error)) {
+        fprintf(stderr, "flash: %s\n", error);
+        exit(2);
+    }
     E.flash = malloc(size + 8);
+    if (!E.flash) { fprintf(stderr, "cannot allocate flash\n"); exit(2); }
     memset(E.flash, 0xFF, size + 8);
     if (fread(E.flash, 1, (size_t)n, f) != (size_t)n) { fprintf(stderr, "read error\n"); exit(2); }
     fclose(f);
     E.flash_size = size;
     int cap = 0; while ((1u << cap) < size) cap++;
-    E.flash_id = 0xEF | (0x40 << 8) | ((uint32_t)cap << 16);
+    E.flash_id = forced_id ? forced_id : 0xEF | (0x40 << 8) | ((uint32_t)cap << 16);
 }
 
 static void write_report(const char *why)
@@ -425,11 +447,13 @@ static void write_report(const char *why)
                "  \"virtual_us\": %llu,\n  \"instructions_since_boot\": %llu,\n  \"loop_task_dispatches\": %u,\n"
                "  \"setup_calls\": %llu,\n  \"loop_calls\": %llu,\n  \"loop_calls_all_boots\": %llu,\n"
                "  \"uart0_bytes\": %llu,\n  \"uart1_bytes\": %llu,\n"
-               "  \"uart0_bytes_on_wire\": %llu,\n  \"cpu_mhz\": %u,\n  \"flash_size\": %u\n}\n",
+               "  \"uart0_bytes_on_wire\": %llu,\n  \"cpu_mhz\": %u,\n  \"flash_size\": %u,\n"
+               "  \"chip\": \"%s\",\n  \"flash_id\": %u\n}\n",
             why, e, stage_name(E.stage), (unsigned long long)E.boot_count, (unsigned long long)now_us(),
             (unsigned long long)(E.cycles - E.boot_cycles), E.loop_dispatches, (unsigned long long)E.setup_calls,
             (unsigned long long)E.loop_calls, (unsigned long long)E.loop_total, (unsigned long long)uart_total[0],
-            (unsigned long long)uart_total[1], (unsigned long long)uart_wire[0], E.cpu_mhz, E.flash_size);
+            (unsigned long long)uart_total[1], (unsigned long long)uart_wire[0], E.cpu_mhz, E.flash_size,
+            E.chip_profile ? E.chip_profile->name : "esp8266", E.flash_id);
     fclose(f);
 }
 
@@ -437,7 +461,9 @@ static void usage(void)
 {
     fprintf(stderr,
         "usage: esp8266emu --flash IMAGE.bin [options]\n"
-        "  --flash-size BYTES     override the size from the image header\n"
+        "  --chip NAME            esp8266, esp12e, esp12f, esp8285, esp8285h16\n"
+        "  --flash-size BYTES     set physical capacity (fixed for ESP8285 profiles)\n"
+        "  --flash-id HEX         set the 24-bit JEDEC flash ID\n"
         "  --flash-out FILE       persist flash writes (config, OTA) to FILE\n"
         "  --speed X              1 = real time (default), 0 = as fast as possible\n"
         "  --max-seconds S        stop after S seconds of emulated time\n"
@@ -453,13 +479,29 @@ static void usage(void)
 
 int main(int argc, char **argv)
 {
-    uint32_t forced_size = 0;
+    uint32_t forced_size = 0, forced_id = 0;
     signal(SIGPIPE, SIG_IGN);
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i];
         const char *v = i + 1 < argc ? argv[i + 1] : NULL;
         if (!strcmp(a, "--flash") && v) { flash_path = v; i++; }
-        else if (!strcmp(a, "--flash-size") && v) { forced_size = (uint32_t)strtoul(v, NULL, 0); i++; }
+        else if (!strcmp(a, "--chip") && v) {
+            selected_chip = chip_profile_find(v);
+            if (!selected_chip) { fprintf(stderr, "unknown chip profile: %s\n", v); return 2; }
+            i++;
+        }
+        else if (!strcmp(a, "--flash-size") && v) {
+            forced_size = flash_option(v, a);
+            if (!forced_size) { fprintf(stderr, "flash size must be greater than zero\n"); return 2; }
+            i++;
+        }
+        else if (!strcmp(a, "--flash-id") && v) {
+            forced_id = flash_option(v, a);
+            if (!forced_id || forced_id > 0xffffffu) {
+                fprintf(stderr, "flash ID must be a nonzero 24-bit value\n"); return 2;
+            }
+            i++;
+        }
         else if (!strcmp(a, "--flash-out") && v) { flash_out = v; i++; }
         else if (!strcmp(a, "--speed") && v) { speed = atof(v); i++; }
         else if (!strcmp(a, "--max-seconds") && v) { max_vsec = atof(v); i++; }
@@ -480,7 +522,7 @@ int main(int argc, char **argv)
         else usage();
     }
     if (!flash_path) usage();
-    load_flash(forced_size);
+    load_flash(forced_size, forced_id);
     if (uart_log_path) uart_log = fopen(uart_log_path, "wb");
     rom_init();
     wall_ref_ns = stat_ns_ref = wall_ns();

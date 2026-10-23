@@ -828,8 +828,9 @@ void soc_reset(bool keep_rtc)
     cpu_fetch_invalidate();
     // eFuse as the SDK's call_user_start_local reads it (base 0x3FEFFE00 + 0x250..0x25C): word 2 bit 15 = ESP8266
     // family (else "Firmware ONLY supports ESP8266!!!"), bit 12 clear = default OUI 18:FE:34, so the MAC is
-    // 18:FE:34:EE:B0:01 (NIC bytes made up). Word 0 bit 4 marks an ESP8285 (embedded 1 MiB flash), as esptool reads it.
-    efuse[0] = 0x01000000u | (E.flash_size <= 0x100000 ? 0x10 : 0);
+    // 18:FE:34:EE:B0:01 (NIC bytes made up). Chip identity is independent of
+    // capacity: an ESP8266 can have 1 MiB external flash, and ESP8285H16 has 2 MiB.
+    efuse[0] = 0x01000000u | (E.chip_profile && E.chip_profile->embedded_flash ? 0x10 : 0);
     efuse[1] = 0x0000EEB0u;
     efuse[2] = 0x00008000u;
     efuse[3] = 0;

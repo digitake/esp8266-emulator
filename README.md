@@ -81,6 +81,15 @@ build/esp8266emu --flash /path/to/firmware.bin \
   --speed 0 --max-seconds 10 --no-stdin --quiet
 ```
 
+Select physical chip and flash settings with `--chip esp8266`, `esp12e`,
+`esp12f`, `esp8285` (1 MiB) or `esp8285h16` (2 MiB). External-flash profiles
+default to 4 MiB and accept `--flash-size BYTES`; embedded-flash profiles have
+fixed capacity. `--flash-id HEX` selects the flash chip's 24-bit JEDEC ID.
+Without `--chip`, the emulator uses ESP8266 identity and the image header's
+flash capacity. An image larger than the selected capacity is rejected.
+These profiles set identity and capacity; they do not establish support for
+every peripheral or firmware built for that chip.
+
 Capture a masked report with input hashes, execution counts and pin edges:
 
 ```sh

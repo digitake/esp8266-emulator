@@ -125,9 +125,25 @@ static void flash_bounds(void)
     CHECK(flash[0] == 0xff);
 }
 
+static void chip_identity(void)
+{
+    reset();
+    E.chip_profile = chip_profile_find("esp8266");
+    E.flash_size = 1u << 20;
+    soc_reset(true);
+    CHECK(!(mem_ld32(DPORT_BASE + 0x50) & 0x10));
+    E.chip_profile = chip_profile_find("esp8285");
+    soc_reset(true);
+    CHECK(mem_ld32(DPORT_BASE + 0x50) & 0x10);
+    E.chip_profile = chip_profile_find("esp8285h16");
+    E.flash_size = 2u << 20;
+    soc_reset(true);
+    CHECK(mem_ld32(DPORT_BASE + 0x50) & 0x10);
+}
+
 int main(void)
 {
-    uart_rx(); timers(); gpio(); flash_bounds();
+    uart_rx(); timers(); gpio(); flash_bounds(); chip_identity();
     printf("peripherals: %s (%d failures)\n", failures ? "FAIL" : "PASS", failures);
     return failures != 0;
 }
