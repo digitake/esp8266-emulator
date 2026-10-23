@@ -4,11 +4,12 @@
 Drop a firmware .bin (optionally with its .elf) on the page and the emulated chip boots it immediately.
 The page shows the UART console (secrets masked), the pins (relay/LED/button roles per device profile),
 the boot stage and what the firmware's UART says about Wi-Fi, and has button/reset/power controls.
+With --net-profile, images that the profile binds run on the experimental virtual network (esp8266emu-net).
 
 stdlib only (python3 >= 3.8). Runs where esp8266emu runs (WSL/Linux).
 """
-import argparse, hashlib, http.server, json, os, queue, re, signal, socketserver, subprocess, sys
-import tempfile, threading, time, urllib.parse
+import argparse, hashlib, http.server, ipaddress, json, math, os, queue, re, signal, socketserver, subprocess
+import sys, tempfile, threading, time, urllib.parse
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CHIP = os.path.dirname(HERE)
@@ -22,6 +23,50 @@ BACKLOG_LINES = 1500
 
 PROFILES = {'generic': load_profile()}
 DEFAULT_PROFILE = 'generic'
+
+OFFLINE = 'unavailable: no host network bridge'
+NET_PROFILE_HEADER = 'esp8266-net-v2 arduino-3.1.2-lwip2'
+NET_SPEED_ERROR = 'live networking needs a positive speed: the network runner refuses 0 (max)'
+NET_MAX = 16  # forwards and DNS overrides the runner accepts
+
+
+def net_profile_digests(path):
+    """SHA-256 of every BIN a network profile binds. The runner halts on any other application image."""
+    with open(path, 'rb') as f:
+        data = f.read(1 << 20)
+    lines = data.decode('utf-8', 'replace').splitlines()
+    if not lines or lines[0].rstrip() != NET_PROFILE_HEADER:
+        raise ValueError('not a version 2 network profile; make one with scripts/network_profile.py')
+    digests = set()
+    for line in lines:
+        if line.startswith('sha256 '):
+            digest = line[7:].strip().lower()
+            if not re.fullmatch(r'[0-9a-f]{64}', digest):
+                raise ValueError('invalid sha256 line in the network profile')
+            digests.add(digest)
+    if not digests:
+        raise ValueError('the network profile binds no image')
+    return digests
+
+
+def net_forward(text):
+    m = re.fullmatch(r'([0-9]{1,5}):([0-9]{1,5})', text)
+    if not m or not all(1 <= int(p) <= 65535 for p in m.groups()):
+        raise argparse.ArgumentTypeError('expected HOST_PORT:GUEST_PORT, both 1-65535')
+    return int(m.group(1)), int(m.group(2))
+
+
+def net_host(text):
+    name, _, ip = text.partition('=')
+    labels = name.rstrip('.').split('.')
+    if not (0 < len(name.rstrip('.')) <= 253 and
+            all(re.fullmatch(r'[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?', label) for label in labels)):
+        raise argparse.ArgumentTypeError('expected NAME=IPv4 with a valid DNS name')
+    try:
+        ipaddress.IPv4Address(ip)
+    except ValueError:
+        raise argparse.ArgumentTypeError('expected NAME=IPv4 with a dotted IPv4 address')
+    return name + '=' + ip
 
 
 def flash_size_from_header(b3):
@@ -45,9 +90,12 @@ def atomic_write(path, data):
 
 
 class FirmwareState:
-    """What the firmware's own UART output says (SDK messages are printed by release builds too)."""
+    """What the firmware's own UART output says (SDK messages are printed by release builds too).
 
-    def __init__(self):
+    network is per process, not per boot: a string offline, or the virtual station's badges (dict)."""
+
+    def __init__(self, network=OFFLINE):
+        self.network = network
         self.reset()
 
     def reset(self):
@@ -101,7 +149,27 @@ class FirmwareState:
     def snapshot(self):
         return {'t': 'fw', 'softap': self.softap, 'ap_note': self.ap_note, 'sta': self.sta, 'sta_mac': self.sta_mac, 'ap_mac': self.ap_mac,
                 'ap_ip': self.ap_ip, 'scans': self.scans,
-                'network': 'unavailable: no host network bridge'}
+                'network': dict(self.network) if isinstance(self.network, dict) else self.network}
+
+    def net_event(self, e):
+        """Fold the network runner's periodic net event into the badges. True if anything shown changed."""
+        if not isinstance(self.network, dict):
+            return False
+        net = dict(self.network)
+        net['virtual station'] = ('connected' if e.get('connected') else 'not connected' if e.get('bound')
+                                  else 'waiting for the application')
+        ip = str(e.get('ip') or '')
+        net['IP'] = ip if e.get('connected') and ip != '0.0.0.0' else '-'
+        packets = 'tx %d · rx %d' % (int(e.get('tx', 0)), int(e.get('rx', 0)))
+        lost = int(e.get('tx_rejected', 0)) + int(e.get('rx_dropped', 0))
+        net['packets'] = packets + (' · %d dropped' % lost if lost else '')
+        changed = net != self.network
+        self.network = net
+        return changed
+
+    def net_stopped(self, why):
+        if isinstance(self.network, dict):
+            self.network = dict(self.network, **{'virtual station': why})
 
 
 class Hub:
@@ -149,8 +217,10 @@ class Hub:
 
 
 class Emulator:
-    def __init__(self, hub, workdir, exe, speed):
+    def __init__(self, hub, workdir, exe, speed, net=None):
         self.hub, self.workdir, self.exe = hub, workdir, exe
+        self.net = net              # None, or dict: exe, profile, forwards [(host, guest)], hosts [NAME=IP], capture
+        self.net_live = False       # the running process is the network runner
         self.proc = None
         self.lock = threading.RLock()  # serializes process changes and commands
         self.event_lock = threading.Lock()
@@ -158,6 +228,33 @@ class Emulator:
         self.speed = speed
         self.gen = 0
         self.fw = FirmwareState()
+
+    def network_for(self, image):
+        """(live, badge): the network runner only for an image the profile binds by its exact SHA-256."""
+        if not self.net:
+            return False, OFFLINE
+        try:
+            digests = net_profile_digests(self.net['profile'])   # read again: the profile may have been regenerated
+        except (OSError, ValueError) as e:
+            return False, 'offline: network profile unusable (%s)' % e
+        if image['sha'] not in digests:
+            return False, ('offline: this image (sha256 %s…) is not in the network profile; regenerate the profile '
+                           'with scripts/network_profile.py for this BIN and its ELF' % image['sha'][:12])
+        badges = {'virtual station': 'starting', 'IP': '-', 'packets': '-'}
+        for host, guest in self.net['forwards']:
+            key = 'guest :%d' % guest
+            badges[key if key not in badges else '%s via %d' % (key, host)] = 'http://127.0.0.1:%d/' % host
+        return True, badges
+
+    def net_args(self):
+        args = ['--net-profile', self.net['profile']]
+        for host, guest in self.net['forwards']:
+            args += ['--net-forward', '%d:%d' % (host, guest)]
+        for entry in self.net['hosts']:
+            args += ['--net-host', entry]
+        if self.net.get('capture'):
+            args += ['--net-capture', self.net['capture']]
+        return args
 
     def paths(self, sha):
         d = os.path.join(self.workdir, 'images')
@@ -189,7 +286,14 @@ class Emulator:
             if fresh and os.path.exists(flashp):
                 os.remove(flashp)
             src = flashp if os.path.exists(flashp) else binp
-            cmd = [self.exe, '--flash', src, '--flash-out', flashp, '--speed', str(self.speed)]
+            live, network = self.network_for(image)
+            note = None
+            if live and not self.speed > 0:
+                self.speed, note = 1.0, 'speed set to 1×: ' + NET_SPEED_ERROR
+            self.net_live = live
+            cmd = [self.net['exe'] if live else self.exe, '--flash', src, '--flash-out', flashp, '--speed', str(self.speed)]
+            if live:
+                cmd += self.net_args()
             if image.get('elf'):
                 try:
                     st, lp = arduino_hooks(image['elf'])
@@ -199,20 +303,22 @@ class Emulator:
                         cmd += ['--sym-loop', hex(lp)]
                 except Exception as e:
                     self.hub.send({'t': 'log', 'm': 'ELF not usable: %s' % e})
-            self.fw = FirmwareState()
+            self.fw = fw = FirmwareState(network)
             with self.hub.lock:
                 self.hub.console.clear()
                 self.hub.snap.clear()
             self.hub.send({'t': 'clear'})
             self.hub.send({'t': 'image', **{k: v for k, v in image.items() if k != 'elf'}, 'has_elf': bool(image.get('elf')),
-                           'flash_persisted': src == flashp}, key='image')
+                           'flash_persisted': src == flashp, 'net': live}, key='image')
             self.hub.send({'t': 'profile', 'name': image['profile'], **PROFILES[image['profile']]}, key='profile')
-            self.hub.send(self.fw.snapshot(), key='fw')
+            self.hub.send(fw.snapshot(), key='fw')
             self.hub.send({'t': 'stages', 'list': []}, key='stages')
+            if note:
+                self.hub.send({'t': 'log', 'm': note})
             p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)
             self.proc = p
-            threading.Thread(target=self._reader, args=(p, self.gen), daemon=True).start()
-            threading.Thread(target=self._stderr, args=(p, self.gen), daemon=True).start()
+            threading.Thread(target=self._reader, args=(p, self.gen, fw), daemon=True).start()
+            threading.Thread(target=self._stderr, args=(p, self.gen, fw), daemon=True).start()
 
     def send(self, line):
         with self.lock:
@@ -230,13 +336,19 @@ class Emulator:
             if gen == self.gen:
                 self.hub.send(ev, key=key)
 
-    def _stderr(self, p, gen):
+    def _stderr(self, p, gen, fw=None):
+        last = ''
         with p.stderr:
             for line in p.stderr:
-                self._publish(gen, {'t': 'log', 'm': 'emulator: ' + line.decode('utf-8', 'replace').rstrip()})
+                text = line.decode('utf-8', 'replace').rstrip()
+                last = text or last
+                self._publish(gen, {'t': 'log', 'm': 'emulator: ' + text})
+        if fw is not None and isinstance(fw.network, dict) and p.wait() != 0:
+            fw.net_stopped('stopped: ' + (last or 'exit status %d' % p.returncode))   # e.g. a rejected profile
+            self._publish(gen, fw.snapshot(), key='fw')
 
-    def _reader(self, p, gen):
-        fw = FirmwareState()  # state belongs to this process generation
+    def _reader(self, p, gen, fw=None):
+        fw = FirmwareState() if fw is None else fw  # state belongs to this process generation
         maskers = [StreamMasker(), StreamMasker()]
         fw_lines = ['', '']  # console chunks may end in the middle of an SDK message
         wire = [1, 1]
@@ -295,8 +407,14 @@ class Emulator:
                 self._publish(gen, {'t': 'stages', 'list': stages[-40:]}, key='stages')
             elif t == 'stat':
                 self._publish(gen, e, key='stat')
+            elif t == 'net':
+                if fw.net_event(e):
+                    self._publish(gen, fw.snapshot(), key='fw')
             elif t == 'halt':
                 self._publish(gen, e, key='halt')
+                if isinstance(fw.network, dict):
+                    fw.net_stopped('halted')        # the next boot's net event brings it back
+                    self._publish(gen, fw.snapshot(), key='fw')
             elif t == 'log':
                 if 'romfunc' not in e.get('m', ''):
                     self._publish(gen, e)
@@ -449,6 +567,9 @@ def make_handler(hub, emu, port, workdir):
                     return
                 try:
                     ok = run_cmd(c)
+                except BodyError as e:
+                    self._json(e.status, {'error': str(e)})
+                    return
                 except (AttributeError, KeyError, TypeError, ValueError, OverflowError):
                     self._json(400, {'error': 'invalid command fields'})
                     return
@@ -466,7 +587,10 @@ def make_handler(hub, emu, port, workdir):
             return emu.send(cmd)
         elif cmd == 'speed':
             with emu.lock:
-                emu.speed = max(0.0, min(float(c['value']), 4.0))
+                speed = max(0.0, min(float(c['value']), 4.0))
+                if emu.net_live and not speed > 0:
+                    raise BodyError(409, NET_SPEED_ERROR)
+                emu.speed = speed
                 return emu.send('speed %g' % emu.speed)
         elif cmd == 'rx':
             data = str(c.get('text', ''))[:512].encode('latin-1', 'replace')
@@ -496,6 +620,42 @@ class Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
     allow_reuse_address = True
 
 
+def check_net_options(ap, a):
+    """Refuse at launch what the network runner would refuse each time it starts."""
+    if not (math.isfinite(a.speed) and a.speed > 0):
+        ap.error('--net-profile needs a positive --speed (1 = real time): the network runner refuses 0')
+    a.net_profile = os.path.abspath(a.net_profile)
+    try:
+        net_profile_digests(a.net_profile)
+    except (OSError, ValueError) as error:
+        ap.error('--net-profile %s: %s' % (a.net_profile, error))
+    hosts = [h for h, _ in a.net_forward]
+    if len(a.net_forward) > NET_MAX or len(a.net_host) > NET_MAX:
+        ap.error('at most %d --net-forward and %d --net-host options' % (NET_MAX, NET_MAX))
+    if len(set(hosts)) != len(hosts) or a.port in hosts:
+        ap.error('each --net-forward needs its own host port, other than the GUI port %d' % a.port)
+    names = [h.split('=')[0].rstrip('.').lower() for h in a.net_host]
+    if len(set(names)) != len(names):
+        ap.error('duplicate --net-host name')
+    if a.net_capture:
+        a.net_capture = os.path.abspath(a.net_capture)
+        if not os.path.isdir(os.path.dirname(a.net_capture)):
+            ap.error('--net-capture: no such directory %s' % os.path.dirname(a.net_capture))
+
+
+def build_net_runner():
+    """make build/esp8266emu-net (a no-op when current), or exit with what to install."""
+    exe = os.path.join(CHIP, 'build', 'esp8266emu-net')
+    try:
+        code = subprocess.run(['make', '-s', '-C', CHIP, 'network']).returncode
+    except OSError as error:
+        sys.exit('cannot run make to build %s: %s' % (exe, error))
+    if code or not os.path.exists(exe):
+        sys.exit('--net-profile needs the network runner %s, and building it needs libslirp.\n'
+                 'Install it, then start again:  sudo apt install -y libslirp-dev libglib2.0-dev pkg-config' % exe)
+    return exe
+
+
 def main():
     global DEFAULT_PROFILE
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -503,9 +663,22 @@ def main():
     ap.add_argument('--bin', help='boot this image at start')
     ap.add_argument('--elf', help='its ELF (setup()/loop() counting)')
     ap.add_argument('--profile-file', help='optional JSON GPIO labels and display panel')
-    ap.add_argument('--speed', type=float, default=1.0, help='1 = real time (default), 0 = as fast as possible')
+    ap.add_argument('--speed', type=float, default=1.0,
+                    help='1 = real time (default), 0 = as fast as possible (offline only)')
     ap.add_argument('--workdir', default=os.path.join(os.path.expanduser('~'), '.cache', 'esp8266-emulator'))
+    net = ap.add_argument_group('experimental virtual network (Arduino core 3.1.2/lwIP2, needs libslirp)')
+    net.add_argument('--net-profile', metavar='FILE',
+                     help='run images this profile binds (scripts/network_profile.py) on build/esp8266emu-net')
+    net.add_argument('--net-forward', metavar='HOST:GUEST', type=net_forward, action='append', default=[],
+                     help='forward 127.0.0.1:HOST to guest port GUEST (repeatable)')
+    net.add_argument('--net-host', metavar='NAME=IP', type=net_host, action='append', default=[],
+                     help='answer the guest\'s DNS query for NAME with IP, e.g. 10.0.2.2 for this host (repeatable)')
+    net.add_argument('--net-capture', metavar='FILE', help='write guest Ethernet frames to a PCAP file')
     a = ap.parse_args()
+    if a.net_profile:
+        check_net_options(ap, a)
+    elif a.net_forward or a.net_host or a.net_capture:
+        ap.error('--net-forward, --net-host and --net-capture need --net-profile')
     if a.profile_file:
         try:
             profile = load_profile(a.profile_file)
@@ -519,9 +692,13 @@ def main():
     exe = os.path.join(CHIP, 'build', 'esp8266emu')
     if not os.path.exists(exe):
         sys.exit('build the emulator first: make -C %s' % CHIP)
+    netcfg = None
+    if a.net_profile:
+        netcfg = {'exe': build_net_runner(), 'profile': a.net_profile, 'forwards': a.net_forward,
+                  'hosts': a.net_host, 'capture': a.net_capture}
     os.makedirs(a.workdir, exist_ok=True)
     hub = Hub()
-    emu = Emulator(hub, a.workdir, exe, a.speed)
+    emu = Emulator(hub, a.workdir, exe, a.speed, netcfg)
     httpd = Server(('127.0.0.1', a.port), make_handler(hub, emu, a.port, a.workdir))
 
     def bye(*_):
@@ -544,6 +721,10 @@ def main():
         emu.start({'sha': sha, 'name': os.path.basename(a.bin), 'size': len(body), 'flash_size': fsize,
                    'profile': DEFAULT_PROFILE, 'elf': elf})
     print('ESP8266 emulator GUI: http://127.0.0.1:%d/  (loopback only; Ctrl+C to stop)' % a.port, flush=True)
+    if netcfg:
+        print('virtual network: images bound by %s run on %s%s' % (
+            netcfg['profile'], netcfg['exe'], ''.join('; http://127.0.0.1:%d/ -> guest port %d' % f for f in netcfg['forwards'])),
+            flush=True)
     httpd.serve_forever()
 
 

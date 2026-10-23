@@ -39,6 +39,7 @@ header { display: flex; align-items: center; gap: 12px; padding: 8px 16px; borde
 .ro .spark polyline { fill: none; stroke: var(--blue); stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; opacity: .85; }
 .ro.speed { flex-direction: row; align-items: center; gap: 10px; }
 .ro.speed .spdgroup { display: flex; gap: 3px; }
+.spd.blocked { opacity: .45; cursor: not-allowed; }
 .pill { padding: 4px 10px; border-radius: 999px; font-weight: 600; font-size: 12.5px; background: #222733; color: var(--muted); }
 .pill.loop { background: rgba(57,217,138,.14); color: var(--green); }
 .pill.boot { background: rgba(90,168,255,.14); color: var(--blue); }
@@ -151,6 +152,7 @@ main { display: grid; grid-template-columns: minmax(360px, 440px) 1fr; gap: 12px
 .badge.up i { background: var(--green); box-shadow: 0 0 6px rgba(57,217,138,.7); }
 .badge.down i { background: var(--red); }
 .badge.busy i { background: var(--amber); }
+.badge a { color: var(--blue); }
 
 /* console */
 .console-card { display: flex; flex-direction: column; min-height: 0; }
@@ -207,7 +209,7 @@ main { display: grid; grid-template-columns: minmax(360px, 440px) 1fr; gap: 12px
       <div class="spdgroup">
         <button data-speed="1" class="spd small active" title="real time">1×</button>
         <button data-speed="0.25" class="spd small" title="quarter speed">¼×</button>
-        <button data-speed="0" class="spd small" title="as fast as the host can">max</button>
+        <button data-speed="0" class="spd small" id="spdmax" title="as fast as the host can">max</button>
       </div>
     </div>
     <div class="ro" title="million guest instructions per host second"><small>MIPS</small><b id="mips">-</b><svg class="spark" id="sparkMips" viewBox="0 0 64 14"><polyline points=""/></svg></div>
@@ -260,7 +262,7 @@ main { display: grid; grid-template-columns: minmax(360px, 440px) 1fr; gap: 12px
       </div>
     </section>
     <section class="card" id="netcard">
-      <h2>Network <span class="right">from the firmware's own UART messages</span></h2>
+      <h2>Network <span class="right" id="netsrc">from the firmware's own UART messages</span></h2>
       <div class="body badges" id="net"></div>
     </section>
   </div>
@@ -642,18 +644,25 @@ document.querySelectorAll('.win').forEach(b => b.onclick = () => {
 });
 setInterval(drawWave, 50);
 
-// ---------------------------------------------------------------- network badges (today: what the SDK prints on the UART)
+// ---------------------------------------------------------------- network badges (the SDK's UART messages, plus the virtual network runner)
+const LOCAL_URL = /^http:\/\/127\.0\.0\.1:\d{1,5}\/$/;    // forwarded guest ports: loopback only
 function renderNet() {
   const fw = S.fw || {}, b = [];
-  const badge = (cls, label, val, title) => `<span class="badge ${cls}" title="${esc(title || '')}"><i></i>${esc(label)} <b>${esc(String(val))}</b></span>`;
+  const value = v => LOCAL_URL.test(v) ? `<a href="${esc(v)}" target="_blank" rel="noopener noreferrer">${esc(v)}</a>` : esc(v);
+  const badge = (cls, label, val, title) => `<span class="badge ${cls}" title="${esc(title || '')}"><i></i>${esc(label)} <b>${value(String(val))}</b></span>`;
   b.push(badge(fw.softap == null ? '' : fw.softap ? 'up' : 'down', 'soft AP',
     fw.softap == null ? '-' : fw.softap ? (fw.ap_ip || 'up') : 'down' + (fw.ap_note ? ' · ' + fw.ap_note : ''), fw.ap_mac ? 'AP MAC ' + fw.ap_mac : ''));
   const sta = fw.sta || '-';
   b.push(badge(/^(got IP|connected)/.test(sta) ? 'up' : sta === 'idle' || sta === '-' ? '' : 'busy', 'station', sta, fw.sta_mac ? 'station MAC ' + fw.sta_mac : ''));
   b.push(badge(fw.scans ? 'busy' : '', 'scans', fw.scans != null ? fw.scans : '-', 'Wi-Fi scans this boot, from the SDK\'s scandone messages'));
-  const net = fw.network;    // a string today; a host network bridge may report an object, shown one badge per field
-  if (net && typeof net === 'object') for (const [k, v] of Object.entries(net)) b.push(badge(v === true || /^(up|connected|on)/i.test(String(v)) ? 'up' : v === false ? 'down' : '', k, v, ''));
-  else b.push(badge(net && !/^unavailable/.test(net) ? 'up' : '', 'host network', net || '-', 'bridge from the emulated station to the host network'));
+  const net = fw.network;    // a string when offline; the virtual network runner's state is an object, one badge per field
+  if (net && typeof net === 'object') for (const [k, v] of Object.entries(net)) {
+    const s = String(v);
+    b.push(badge(v === true || /^(up|connected|on)/i.test(s) ? 'up' : v === false || /^(down|stopped|halted)/i.test(s) ? 'down' :
+      /^(starting|waiting)/i.test(s) ? 'busy' : '', k, v, LOCAL_URL.test(s) ? 'opens the forwarded guest port in a new tab' : s));
+  }
+  else b.push(badge(net && !/^(unavailable|offline)/.test(net) ? 'up' : '', 'host network', net || '-',
+    net && /^offline/.test(net) ? net : 'bridge from the emulated station to the host network'));
   $('net').innerHTML = b.join('');
 }
 
@@ -689,9 +698,11 @@ function sendRx() { const v = $('rx').value; if (!v) return; cmd({ cmd: 'rx', te
 $('btnReset').onclick = () => cmd({ cmd: 'reset' });
 $('btnPower').onclick = () => cmd({ cmd: 'power' });
 $('btnErase').onclick = () => { if (confirm('Rewrite the emulated flash from the original image? Saved config (Wi-Fi, keys) in the emulated flash is lost.')) cmd({ cmd: 'erase' }); };
+const markSpeed = v => document.querySelectorAll('.spd').forEach(x => x.classList.toggle('active', +x.dataset.speed === v));
 document.querySelectorAll('.spd').forEach(b => b.onclick = () => {
-  document.querySelectorAll('.spd').forEach(x => x.classList.remove('active')); b.classList.add('active');
-  cmd({ cmd: 'speed', value: +b.dataset.speed });
+  if (b.classList.contains('blocked')) { toast(b.title); return; }
+  markSpeed(+b.dataset.speed);
+  api('/api/cmd', { cmd: 'speed', value: +b.dataset.speed }).catch(e => { toast(e.message); if (S.stat) markSpeed(S.stat.speed); });
 });
 $('profile').onchange = () => {
   if (S.press) { cmd({ cmd: 'pin', pin: S.press.pin, level: -1 }); S.press = null; }
@@ -707,10 +718,14 @@ function onEvent(e) {
       $('imginfo').textContent = ` ${(e.size / 1024).toFixed(0)} KB · ${e.sha.slice(0, 8)} · flash ${e.flash_size / 1048576} MB${e.has_elf ? ' · +elf' : ''}${e.flash_persisted ? ' · saved flash' : ''}`;
       $('empty').style.display = 'none'; $('chipbox').classList.remove('nofw');
       $('chipflash').textContent = `ESP8266EX · ${e.flash_size / 1048576} MB flash`;
+      $('spdmax').classList.toggle('blocked', !!e.net);      // the network runner needs a positive speed
+      $('spdmax').title = e.net ? 'Max is off while the virtual network runs: live networking needs a positive speed.' : 'as fast as the host can';
+      $('netsrc').textContent = e.net ? 'UART messages and the virtual network runner' : "from the firmware's own UART messages";
       break;
     case 'profile': S.profile = e; $('profile').value = e.name; renderDevice(); break;
     case 'clear':      // a (re)started emulator process: everything below belongs to the previous one
       con.innerHTML = ''; lineEl = null; S.counts = Array(17).fill(0); S.halt = null; S.stages = []; S.hist = []; S.driven = {};
+      S.speedSync = true;   // the server may have changed the speed for the new process (max -> 1x on the virtual network)
       S.spark = { ratio: [], mips: [] }; resetWave(); renderChip(); renderBoot(); break;
     case 'backlog': e.lines.forEach(consoleEv); break;
     case 'console': consoleEv(e); break;
@@ -733,6 +748,7 @@ function onEvent(e) {
       renderBoot(); break;
     }
     case 'stat':
+      if (S.speedSync || !S.stat || S.stat.speed !== e.speed) { markSpeed(e.speed); S.speedSync = false; }  // follow the server
       if (e.ratio > 0) S.ratio = S.ratio * 0.5 + e.ratio * 0.5;     // measured by the emulator itself
       else if (S.stat && e.t_us === S.stat.t_us) S.ratio = 0;        // halted or stopped: emulated time stands still
       S.stat = e; S.statWall = performance.now();

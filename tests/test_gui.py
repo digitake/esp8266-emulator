@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -32,6 +33,24 @@ for line in sys.stdin:
         break
 '''
 
+# Stands in for build/esp8266emu-net, which needs libslirp: refuses what the runner refuses at startup,
+# then reports one connected station.
+FAKE_NET = '''#!/usr/bin/python3
+import json, sys
+args=sys.argv
+speed=float(args[args.index('--speed')+1])
+if speed<=0:
+    print('live networking requires a positive --speed (use 1)',file=sys.stderr);sys.exit(2)
+if 'refuse' in open(args[args.index('--net-profile')+1]).read():
+    print('network: network profile BIN SHA256 mismatch',file=sys.stderr);sys.exit(2)
+print(json.dumps({'t':'stat','speed':speed}),flush=True)
+print(json.dumps({'t':'net','bound':True,'image':1,'connected':True,'ip':'10.0.2.15',
+                  'tx':3,'rx':4,'tx_rejected':0,'rx_dropped':0}),flush=True)
+for line in sys.stdin:
+    if line.strip()=='quit':
+        break
+'''
+
 class GuiTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -41,9 +60,11 @@ class GuiTests(unittest.TestCase):
         exe.chmod(0o700)
         self.hub = server.Hub()
         self.ready = threading.Event()
+        self.events = []
         send = self.hub.send
         def publish(ev, key=None):
             send(ev,key)
+            self.events.append(ev)
             if ev['t']=='stat':self.ready.set()
         self.hub.send = publish
         self.emu = server.Emulator(self.hub, str(self.work), str(exe), 1)
@@ -339,6 +360,170 @@ class GuiTests(unittest.TestCase):
         release.set();reader.join(2)
         self.assertFalse(reader.is_alive())
         self.assertEqual(self.hub.snap['pins']['lv'],'current')
+
+    def net_emulator(self, digest=None, extra='', forwards=((8080, 80),), hosts=('broker.example.test=10.0.2.2',)):
+        exe = self.work / 'fake-emulator-net'
+        exe.write_text(FAKE_NET)
+        exe.chmod(0o700)
+        profile = self.work / 'network-profile.txt'
+        profile.write_text('%s\n# %s\nimage /fw.bin\nsha256 %s\nend\n' % (
+            server.NET_PROFILE_HEADER, extra, digest or self.image['sha']))
+        net = {'exe': str(exe), 'profile': str(profile), 'forwards': list(forwards), 'hosts': list(hosts),
+               'capture': None}
+        self.emu = server.Emulator(self.hub, str(self.work), self.emu.exe, 1, net)
+        return net
+
+    def wait_for(self, predicate, timeout=3):
+        end = time.monotonic() + timeout
+        while time.monotonic() < end:
+            if predicate():
+                return True
+            time.sleep(.02)
+        return predicate()
+
+    def station(self):
+        net = self.hub.snap.get('fw', {}).get('network')
+        return net.get('virtual station') if isinstance(net, dict) else None
+
+    def test_profile_bound_image_runs_on_the_network_runner(self):
+        net = self.net_emulator()
+        self.emu.start(self.image)
+        self.assertTrue(self.wait_for(lambda: self.station() == 'connected'))
+        args = self.emu.proc.args
+        self.assertEqual(args[0], net['exe'])
+        self.assertEqual(args[args.index('--net-profile') + 1], net['profile'])
+        self.assertEqual(args[args.index('--net-forward') + 1], '8080:80')
+        self.assertEqual(args[args.index('--net-host') + 1], 'broker.example.test=10.0.2.2')
+        self.assertNotIn('--net-capture', args)
+        self.assertTrue(self.hub.snap['image']['net'])
+        self.assertEqual(self.hub.snap['fw']['network'],
+                         {'virtual station': 'connected', 'IP': '10.0.2.15', 'packets': 'tx 3 · rx 4',
+                          'guest :80': 'http://127.0.0.1:8080/'})
+
+    def test_image_missing_from_profile_runs_offline_with_a_badge(self):
+        self.net_emulator(digest='b' * 64)
+        self.emu.start(self.image)
+        self.assertTrue(self.ready.wait(2))
+        args = self.emu.proc.args
+        self.assertEqual(args[0], self.emu.exe)
+        self.assertFalse([a for a in args if a.startswith('--net')])
+        self.assertFalse(self.hub.snap['image']['net'])
+        network = self.hub.snap['fw']['network']
+        self.assertTrue(network.startswith('offline: this image'), network)
+        self.assertIn('not in the network profile', network)
+        status, _ = self.request(b'{"cmd":"speed","value":0}')
+        self.assertEqual(status, 200)
+
+    def test_unreadable_profile_runs_offline_with_the_reason(self):
+        net = self.net_emulator()
+        Path(net['profile']).write_text('esp8266-net-v1\n')
+        self.emu.start(self.image)
+        self.assertTrue(self.ready.wait(2))
+        self.assertEqual(self.emu.proc.args[0], self.emu.exe)
+        self.assertIn('network profile unusable', self.hub.snap['fw']['network'])
+
+    def test_live_network_refuses_maximum_speed(self):
+        self.net_emulator()
+        self.emu.start(self.image)
+        self.assertTrue(self.ready.wait(2))
+        for value in (0, -1, 'NaN'):
+            with self.subTest(value=value):
+                status, data = self.request(json.dumps({'cmd': 'speed', 'value': value}).encode())
+                self.assertEqual(status, 409)
+                self.assertEqual(json.loads(data)['error'], server.NET_SPEED_ERROR)
+                self.assertEqual(self.emu.speed, 1)
+        status, data = self.request(b'{"cmd":"speed","value":0.25}')
+        self.assertEqual((status, json.loads(data)), (200, {'ok': True}))
+        self.assertEqual(self.emu.speed, 0.25)
+
+    def test_maximum_speed_becomes_real_time_for_a_networked_image(self):
+        self.net_emulator()
+        self.emu.speed = 0
+        self.emu.start(self.image)
+        self.assertTrue(self.wait_for(lambda: self.station() == 'connected'))
+        args = self.emu.proc.args
+        self.assertEqual(args[args.index('--speed') + 1], '1.0')
+        self.assertIn('speed set to 1×: ' + server.NET_SPEED_ERROR,
+                      [e.get('m') for e in self.events if e['t'] == 'log'])
+
+    def test_failed_network_runner_shows_why_it_stopped(self):
+        self.net_emulator(extra='refuse')
+        self.emu.start(self.image)
+        self.assertTrue(self.wait_for(lambda: (self.station() or '').startswith('stopped')))
+        self.assertEqual(self.station(), 'stopped: network: network profile BIN SHA256 mismatch')
+
+    def test_net_events_update_badges_and_halt_marks_the_station(self):
+        badges = {'virtual station': 'starting', 'IP': '-', 'packets': '-', 'guest :80': 'http://127.0.0.1:8080/'}
+        fw = server.FirmwareState(dict(badges))
+        self.assertTrue(fw.net_event({'t': 'net', 'bound': False, 'connected': False, 'ip': '0.0.0.0', 'tx': 0, 'rx': 0}))
+        self.assertEqual(fw.network['virtual station'], 'waiting for the application')
+        self.assertTrue(fw.net_event({'t': 'net', 'bound': True, 'connected': False, 'ip': '0.0.0.0', 'tx': 1, 'rx': 0}))
+        self.assertEqual((fw.network['virtual station'], fw.network['IP']), ('not connected', '-'))
+        e = {'t': 'net', 'bound': True, 'connected': True, 'ip': '10.0.2.15', 'tx': 9, 'rx': 7,
+             'tx_rejected': 1, 'rx_dropped': 2}
+        self.assertTrue(fw.net_event(e))
+        self.assertFalse(fw.net_event(e))
+        self.assertEqual(fw.network['packets'], 'tx 9 · rx 7 · 3 dropped')
+        self.assertEqual(list(fw.network), list(badges))
+        fw.reset()                                   # a reboot keeps the process's network badges
+        self.assertEqual(fw.snapshot()['network']['IP'], '10.0.2.15')
+        offline = server.FirmwareState()
+        self.assertFalse(offline.net_event(e))
+        self.assertEqual(offline.snapshot()['network'], server.OFFLINE)
+        raw = ''.join(json.dumps(x) + '\n' for x in (e, {'t': 'halt', 'm': 'stop', 'pc': '0'})).encode()
+        proc = SimpleNamespace(stdout=io.BytesIO(raw), poll=lambda: 0)
+        with patch.object(server.threading, 'Thread'):
+            self.emu._reader(proc, self.emu.gen, server.FirmwareState(dict(badges)))
+        self.assertEqual(self.station(), 'halted')
+        self.assertEqual(self.hub.snap['fw']['network']['IP'], '10.0.2.15')
+
+    def test_network_profile_digests(self):
+        path = self.work / 'profile.txt'
+        header = server.NET_PROFILE_HEADER + '\n'
+        path.write_text(header + 'image /a.bin\nsha256 ' + 'A' * 64 + '\nend\nimage /b.bin\nsha256 ' + 'b' * 64 + '\nend\n')
+        self.assertEqual(server.net_profile_digests(path), {'a' * 64, 'b' * 64})
+        for text in ('', 'esp8266-net-v1 arduino-3.1.2-lwip2\n', header, header + 'sha256 xyz\n'):
+            with self.subTest(text=text):
+                path.write_text(text)
+                with self.assertRaises(ValueError):
+                    server.net_profile_digests(path)
+
+    def test_network_option_values(self):
+        self.assertEqual(server.net_forward('8080:80'), (8080, 80))
+        self.assertEqual(server.net_host('Broker.example.test=10.0.2.2'), 'Broker.example.test=10.0.2.2')
+        for text in ('8080', '0:80', '8080:65536', '8080:80:1', 'a:80'):
+            with self.subTest(forward=text), self.assertRaises(server.argparse.ArgumentTypeError):
+                server.net_forward(text)
+        for text in ('broker', 'broker=', '=10.0.2.2', 'bad_name=10.0.2.2', '-x.test=10.0.2.2', 'x.test=10.0.2',
+                     'x.test=::1'):
+            with self.subTest(host=text), self.assertRaises(server.argparse.ArgumentTypeError):
+                server.net_host(text)
+        self.emu.net = {'profile': '/p', 'forwards': [(8080, 80)], 'hosts': ['a.test=10.0.2.2'], 'capture': '/c.pcap'}
+        self.assertEqual(self.emu.net_args(), ['--net-profile', '/p', '--net-forward', '8080:80',
+                                               '--net-host', 'a.test=10.0.2.2', '--net-capture', '/c.pcap'])
+
+    def test_launcher_rejects_network_options_before_building_anything(self):
+        profile = self.work / 'profile.txt'
+        profile.write_text(server.NET_PROFILE_HEADER + '\nimage /a.bin\nsha256 ' + 'a' * 64 + '\nend\n')
+        bad = self.work / 'old-profile.txt'
+        bad.write_text('esp8266-net-v1\n')
+        cases = [(['--net-forward', '8080:80'], 'need --net-profile'),
+                 (['--net-profile', str(profile), '--speed', '0'], 'positive --speed'),
+                 (['--net-profile', str(bad)], 'not a version 2 network profile'),
+                 (['--net-profile', str(profile), '--net-forward', '8277:80'], 'other than the GUI port'),
+                 (['--net-profile', str(profile), '--net-forward', '8080:80', '--net-forward', '8080:81'],
+                  'own host port'),
+                 (['--net-profile', str(profile), '--net-host', 'a.test=10.0.2.2', '--net-host', 'A.test=10.0.2.3'],
+                  'duplicate --net-host'),
+                 (['--net-profile', str(profile), '--net-capture', str(self.work / 'missing' / 'x.pcap')],
+                  'no such directory'),
+                 (['--net-profile', str(profile), '--net-forward', '80'], 'HOST_PORT:GUEST_PORT')]
+        for args, message in cases:
+            with self.subTest(args=args):
+                r = subprocess.run([sys.executable, '-I', str(CHIP / 'gui/server.py'), '--port', '8277',
+                                    '--workdir', str(self.work), *args], capture_output=True, text=True, timeout=20)
+                self.assertEqual(r.returncode, 2, r.stderr)
+                self.assertIn(message, r.stderr)
 
     def test_page_is_self_contained(self):
         # The page must work offline: no CDN scripts, fonts, stylesheets or remote images.
