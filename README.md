@@ -179,6 +179,7 @@ the image. The GUI server only listens on 127.0.0.1 and refuses other host names
 4. [Virtual networking](docs/NETWORKING.md): the experimental network adapter.
 5. [Architecture](docs/ARCHITECTURE.md): how the emulator works inside, and its event protocol.
 6. [Board comparison](docs/BOARD-COMPARISON.md): comparing against a physical board.
+7. [Fleet plan](docs/FLEET-PLAN.md): proposal for ten devices at once with a 3D view.
 
 ## Contributing
 
